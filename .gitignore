@@ -1,0 +1,16 @@
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+.pytest_cache/
+.ruff_cache/
+*.egg-info/
+.env
+frontend/node_modules/
+frontend/dist/
+*.pptx
+!docs/**/*.pptx
+.DS_Store
+.claude/
+.vscode/

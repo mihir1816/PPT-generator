@@ -1,0 +1,66 @@
+[project]
+name = "teacher-content-gen"
+version = "0.1.0"
+description = "Generates PowerPoint presentations from uploaded documents using RAG + LLM"
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi>=0.115.0",
+    "uvicorn[standard]>=0.32.0",
+    "sqlalchemy[asyncio]>=2.0.35",
+    "asyncpg>=0.30.0",
+    "psycopg2-binary>=2.9.9",
+    "alembic>=1.13.3",
+    "redis[hiredis]>=5.1.1",
+    "celery>=5.4.0",
+    "qdrant-client>=1.13.0,<1.15.0",  # keep within 1 minor version of qdrant server v1.14.0
+    "minio>=7.2.9",
+    "pydantic>=2.9.2",
+    "pydantic-settings>=2.5.2",
+    "pdfplumber>=0.11.4",
+    "python-pptx>=1.0.2",
+    "python-docx>=1.1.2",
+    "trafilatura>=1.12.2",
+    "pytesseract>=0.3.13",
+    "Pillow>=10.4.0",
+    "python-magic-bin>=0.4.14; platform_system=='Windows'",
+    "python-magic>=0.4.27; platform_system!='Windows'",
+    "fastembed>=0.4.1",
+    "bm25s>=0.2.5",
+    "flashrank>=0.2.9",
+    "openai>=1.52.0",
+    "httpx>=0.27.2",
+    "sse-starlette>=2.1.3",
+    "python-multipart>=0.0.12",
+    "langchain-text-splitters>=0.3.0",
+    "tiktoken>=0.8.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.3.3",
+    "pytest-asyncio>=0.24.0",
+    "httpx>=0.27.2",
+    "ruff>=0.7.0",
+]
+# Docling is an optional PDF-fallback parser used only for pages with a
+# broken/complex layout (see services/parsers/pdf_parser.py::_try_docling).
+# It is NOT installed by default because it pulls in the full torch + CUDA
+# toolkit (multiple GB) as a transitive dependency, which is unnecessary for
+# this CPU-only FastAPI/Celery container (vLLM is the only GPU consumer, and
+# it runs in its own dedicated container). Install with `pip install -e ".[docling]"`
+# in environments with the bandwidth/disk/need for it. The code degrades
+# gracefully (falls back to pdfplumber-only results) when docling is absent.
+docling = [
+    "docling>=2.5.2",
+]
+
+[build-system]
+requires = ["setuptools>=68.0"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
