@@ -67,16 +67,16 @@ export function ProgressStepper({ stages }: { stages: Stage[] }) {
                 />
               )}
             </div>
-            <div className={`flex-1 ${isLast ? "" : "pb-6"}`}>
+            <div className={`flex-1 min-w-0 ${isLast ? "" : "pb-6"}`}>
               <div className="flex items-center justify-between gap-3">
-                <span className={`font-heading font-bold text-[15px] ${titleColor}`}>
+                <span className={`font-heading font-bold text-[15px] ${titleColor} truncate`}>
                   {stage.title}
                 </span>
                 <span className="text-xs text-ink3 whitespace-nowrap">
                   {stage.detail}
                 </span>
               </div>
-              {stage.content && <div className="mt-2">{stage.content}</div>}
+              {stage.content && <div className="mt-2 overflow-hidden">{stage.content}</div>}
             </div>
           </li>
         );

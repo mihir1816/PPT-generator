@@ -29,10 +29,10 @@ export function SlideProgress({
   }));
 
   return (
-    <div>
+    <div className="w-full min-w-0">
       <div className="flex items-center gap-2.5 mb-2.5">
         <div
-          className="flex-1 h-2 rounded-full bg-line overflow-hidden"
+          className="flex-1 min-w-0 h-2 rounded-full bg-line overflow-hidden"
           role="progressbar"
           aria-valuenow={pct}
           aria-valuemin={0}
@@ -47,7 +47,7 @@ export function SlideProgress({
           {completed} / {total} slides
         </span>
       </div>
-      <div className="flex gap-2.5 overflow-x-auto pb-1">
+      <div className="flex gap-2.5 overflow-x-auto pb-1 max-w-full">
         {thumbs.map((t, i) => (
           <div
             key={i}

@@ -38,8 +38,14 @@ class LLMClient:
         )
 
     def _clamp_max_tokens(self, prompt_text: str, requested: int) -> int:
-        est_input = len(prompt_text) // 3 + 64
+        est_input = int(len(prompt_text) / 2.5) + 100
         headroom = self._model_context - est_input
+        if headroom < 512:
+            logger.warning(
+                "Tight context: ~%d input tokens estimated, only %d headroom "
+                "(model context=%d). Prompt may need trimming.",
+                est_input, headroom, self._model_context,
+            )
         safe = max(256, min(requested, headroom))
         return safe
 

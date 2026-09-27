@@ -16,8 +16,8 @@ from app.services.prompt_templates import SLIDE_OUTLINE_SYSTEM, SLIDE_OUTLINE_US
 
 logger = logging.getLogger(__name__)
 
-CHUNK_SUMMARY_SNIPPET_LEN = 200
-MAX_CHUNKS_PER_TOPIC_SUMMARY = 5
+CHUNK_SUMMARY_SNIPPET_LEN = 120
+MAX_CHUNKS_PER_TOPIC_SUMMARY = 2
 
 
 class OutlineSlideItem(BaseModel):
@@ -50,13 +50,22 @@ class SlideOutlineService:
         topic_chunks = retrieval.get("topic_chunks", [])
         chunks_summary = self._summarize_chunks(topic_chunks)
 
+        syllabus_json = syllabus.model_dump_json(indent=2)
+        max_summary_chars = max(500, self._llm._model_context * 2 - len(syllabus_json) - 800)
+        if len(chunks_summary) > max_summary_chars:
+            logger.warning(
+                "Truncating chunks summary from %d to %d chars to fit context",
+                len(chunks_summary), max_summary_chars,
+            )
+            chunks_summary = chunks_summary[:max_summary_chars] + "\n[... truncated]"
+
         slide_count_hint = str(preferences.slide_count_hint) if preferences.slide_count_hint else "10-15"
 
         try:
             result = await self._llm.generate_json(
                 SLIDE_OUTLINE_SYSTEM,
                 SLIDE_OUTLINE_USER.format(
-                    syllabus_json=syllabus.model_dump_json(indent=2),
+                    syllabus_json=syllabus_json,
                     chunks_summary=chunks_summary,
                     level=preferences.audience_level,
                     tone=preferences.tone,
