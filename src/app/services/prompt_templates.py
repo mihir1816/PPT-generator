@@ -204,76 +204,174 @@ Rules:
 """
 
 # ---------------------------------------------------------------------------
-# Stage 8 — Feedback Parser (slide-level feedback)
+# Stage 8 — Feedback Analyzer (understands intent, creates change plan)
 # ---------------------------------------------------------------------------
-FEEDBACK_PARSER_SYSTEM = (
-    "You parse user feedback on presentation slides into structured actions. "
-    "Respond ONLY with valid JSON."
-)
+FEEDBACK_ANALYZER_SYSTEM = """\
+You analyze user feedback on presentation slides and create a precise change \
+plan. You see a manifest showing what is on each slide. \
+Respond ONLY with valid JSON."""
 
-FEEDBACK_PARSER_USER = """\
-Current slide outline:
-{outline_json}
+FEEDBACK_ANALYZER_USER = """\
+Slide manifest (position. id [type/layout] "title" | content):
+{manifest}
 
 User feedback:
 {feedback_text}
-
+{history_section}
 Output a JSON object:
 {{
-  "actions": [
+  "interpretation": "One sentence: what the user wants",
+  "changes": [
     {{
-      "type": "modify_content" | "delete" | "insert_after" | "reorder" | \
-"change_tone" | "expand" | "add_table" | "add_image",
-      "target_slide": "slide_id",
-      "instruction": "What to do"
+      "action": "edit_content",
+      "target": "slide_id",
+      "edit_instruction": "Specific instruction",
+      "new_layout": null,
+      "new_position": null,
+      "insert_after": null
     }}
   ]
 }}
 
-Parse the user's natural language feedback into specific, actionable items.
-Each action should target a specific slide by its id.
-"""
+action must be one of:
+- edit_content: modify bullets/body/title of an existing slide
+- edit_table: modify table headers, rows, or columns
+- edit_notes: modify only speaker notes
+- change_layout: convert layout (set new_layout to: bullet|table|two_column|image_placeholder)
+- change_tone: restyle without changing facts
+- split_slide: divide one slide into two
+- merge_slides: combine two adjacent slides (target = "id_1+id_2")
+- add_slide: insert a new slide (set insert_after to a slide_id)
+- delete_slide: remove a slide
+- reorder: move a slide (set new_position to the target position number)
 
+Rules:
+- ALWAYS include at least one change in the changes array. Never return an empty changes array.
+- Default to edit_content. Use split_slide ONLY if result would exceed 6 bullets.
+- For "expand" requests: use edit_content to add bullets, not add_slide.
+- edit_instruction must be SPECIFIC: say exactly what to add, remove, or change.
+- target must be the exact slide id from the manifest (e.g. "slide_2", not "2").
+- If user references a slide by topic name, match it to the closest slide title.
+- For global feedback ("make all shorter"), emit one change per content slide.
+- Do not touch title or closing slides unless explicitly asked."""
 
 # ---------------------------------------------------------------------------
-# Stage 9 — Outline Updater (apply parsed feedback actions to the outline)
+# Stage 9 — Slide Editor (edits existing slide content precisely)
 # ---------------------------------------------------------------------------
-OUTLINE_UPDATER_SYSTEM = (
-    "You update a slide outline by applying a list of structured feedback actions. "
-    "Respond ONLY with valid JSON using the same outline schema."
-)
+SLIDE_EDITOR_SYSTEM = """\
+You edit a single presentation slide. Apply the requested change precisely. \
+Preserve everything not asked to change. Use [[key term]] markup on 1-3 \
+important terms per bullet that students should remember. \
+Respond ONLY with valid JSON."""
 
-OUTLINE_UPDATER_USER = """\
-Current slide outline:
-{outline_json}
+SLIDE_EDITOR_USER = """\
+Current slide:
+{current_slide_json}
 
-Parsed feedback actions to apply:
-{actions_json}
+Edit: {edit_instruction}
 
-Available chunk IDs for new or modified slides:
-{chunk_ids_summary}
-
-Output a JSON object with the updated outline:
+Output the complete updated slide as JSON:
 {{
-  "slides": [
-    {{
-      "id": "slide_1",
-      "position": 1,
-      "type": "content",
-      "title": "Slide Title",
-      "key_points": ["point1"],
-      "layout_hint": "bullet",
-      "source_chunk_ids": [],
-      "spans_slides": false,
-      "table_continuation": false,
-      "status": "pending"
-    }}
-  ]
+  "title": "...",
+  "body": "...",
+  "bullet_points": ["..."],
+  "table_data": null,
+  "speaker_notes": "...",
+  "layout_hint": "..."
 }}
 
 Rules:
-- Apply each action exactly as specified. Do not add or remove slides beyond what the actions require.
-- Preserve all slides not targeted by any action.
-- Re-number positions sequentially starting from 1 after applying all changes.
-- For inserted slides, assign source_chunk_ids from the available chunk IDs where relevant.
-"""
+- Apply ONLY the requested edit. Preserve unchanged content exactly.
+- Keep bullet_points concise (max 2 lines each), max 5-6 per slide.
+- Use [[term]] markup on key terms in body and bullet_points.
+- Speaker notes: add presenter context, no [[]] markup."""
+
+# ---------------------------------------------------------------------------
+# Stage 9B — Slide Splitter (splits one slide into two)
+# ---------------------------------------------------------------------------
+SLIDE_SPLITTER_SYSTEM = """\
+You split one presentation slide into two focused slides. Divide content \
+logically. Use [[key term]] markup. Respond ONLY with valid JSON."""
+
+SLIDE_SPLITTER_USER = """\
+Slide to split:
+{current_slide_json}
+
+Split instruction: {edit_instruction}
+
+Output JSON with two slides:
+{{
+  "slide_a": {{"title":"...","body":"...","bullet_points":[...],"table_data":null,"speaker_notes":"...","layout_hint":"..."}},
+  "slide_b": {{"title":"...","body":"...","bullet_points":[...],"table_data":null,"speaker_notes":"...","layout_hint":"..."}}
+}}
+
+Rules:
+- Each slide should have 3-4 bullets, not 1-2.
+- Don't duplicate content between the two slides.
+- Give each a meaningful title (not "Part 1"/"Part 2").
+- Preserve [[markup]] from the original."""
+
+# ---------------------------------------------------------------------------
+# Stage 9C — Slide Merger (combines two slides into one)
+# ---------------------------------------------------------------------------
+SLIDE_MERGER_SYSTEM = """\
+You merge two presentation slides into one. Combine essential content \
+and eliminate redundancy. Use [[key term]] markup. Respond ONLY with valid JSON."""
+
+SLIDE_MERGER_USER = """\
+Slide A:
+{slide_a_json}
+
+Slide B:
+{slide_b_json}
+
+Merge instruction: {edit_instruction}
+
+Output ONE combined slide as JSON:
+{{
+  "title": "...",
+  "body": "...",
+  "bullet_points": ["..."],
+  "table_data": null,
+  "speaker_notes": "...",
+  "layout_hint": "..."
+}}
+
+Rules:
+- Pick the better title or write a new one covering both.
+- Max 5 bullets — cut redundancy, keep key facts.
+- Preserve [[markup]] from originals."""
+
+# ---------------------------------------------------------------------------
+# Stage 9D — New Slide Generator (creates slide from spec + chunks)
+# ---------------------------------------------------------------------------
+SLIDE_NEW_SYSTEM = """\
+You create a new slide for a presentation. Use source content as the basis. \
+Use [[key term]] markup on important terms. Respond ONLY with valid JSON."""
+
+SLIDE_NEW_USER = """\
+New slide spec:
+- Topic: {edit_instruction}
+- Layout: {layout}
+
+Source content:
+{relevant_chunks}
+
+Context:
+- Previous slide: {prev_summary}
+- Next slide: {next_summary}
+
+Output the slide as JSON:
+{{
+  "title": "...",
+  "body": "...",
+  "bullet_points": ["..."],
+  "table_data": null,
+  "speaker_notes": "...",
+  "layout_hint": "{layout}"
+}}
+
+Rules:
+- 3-5 concise bullet points with [[key term]] markup.
+- Speaker notes with presenter context.
+- Fit naturally between the surrounding slides."""
