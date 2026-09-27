@@ -1,5 +1,6 @@
 import json
 import logging
+import re
 from collections.abc import AsyncGenerator
 
 from pydantic import BaseModel, Field
@@ -175,6 +176,8 @@ class SlideGenerator:
 
         return self._post_process(result, outline_entry)
 
+    _MAX_PROMPT_CHARS = 9000
+
     def _build_slide_prompt(
         self,
         outline: SlideOutline,
@@ -197,6 +200,11 @@ class SlideGenerator:
             chunks_text = "\n\n---\n\n".join(chunks)
         else:
             chunks_text = "(No source content available for this slide)"
+
+        overhead = len(SLIDE_CONTENT_SYSTEM) + len(outline_text) + 600
+        budget = self._MAX_PROMPT_CHARS - overhead
+        if budget > 0 and len(chunks_text) > budget:
+            chunks_text = chunks_text[:budget] + "\n...(truncated)"
 
         if prev_slide:
             prev_summary = f'Previous slide: "{prev_slide.title}"'
@@ -256,15 +264,102 @@ class SlideGenerator:
                 rows=[["Data pending", ""]],
             )
 
+        title = result.title or outline.title
+        body = result.body or ""
+        bullets = result.bullet_points or []
+
+        body = SlideGenerator._fix_nested_brackets(body)
+        bullets = [SlideGenerator._fix_nested_brackets(b) for b in bullets]
+
+        all_text = body + " ".join(bullets)
+        if "[[" not in all_text:
+            body, bullets = SlideGenerator._inject_emphasis(
+                title, body, bullets, outline,
+            )
+
         return SlideContent(
             slide_id=outline.id,
-            title=result.title or outline.title,
-            body=result.body or "",
-            bullet_points=result.bullet_points or [],
+            title=title,
+            body=body,
+            bullet_points=bullets,
             table_data=table_data,
             speaker_notes=(
                 result.speaker_notes
-                or f"Presenter notes for: {result.title or outline.title}"
+                or f"Presenter notes for: {title}"
             ),
             layout_hint=layout,
         )
+
+    @staticmethod
+    def _fix_nested_brackets(text: str) -> str:
+        if not text or "[[" not in text:
+            return text
+        while "[[[[" in text:
+            text = text.replace("[[[[", "[[")
+        while "]]]]" in text:
+            text = text.replace("]]]]", "]]")
+        if text.count("[[") != text.count("]]"):
+            text = text.replace("[[", "").replace("]]", "")
+        return text
+
+    _STOP = frozenset(
+        "the a an is are was were be been being have has had do does did "
+        "will would shall should may might must can could and but or nor "
+        "not so yet in on at to for of with by from as into through during "
+        "before after above below between under over this that these those "
+        "it its all each every both few many most other some such no only "
+        "same than too very just about also then more here there when where "
+        "why how used using use includes including various certain specific "
+        "different".split()
+    )
+
+    @staticmethod
+    def _inject_emphasis(
+        title: str,
+        body: str,
+        bullets: list[str],
+        outline: SlideOutline,
+    ) -> tuple[str, list[str]]:
+        bigrams: list[str] = []
+        unigrams: list[str] = []
+
+        sources = list(outline.key_points or []) + [title]
+        for src in sources:
+            words = re.findall(r"[A-Za-z]+(?:'[a-z]+)?", src)
+            for w in words:
+                low = w.lower()
+                if low not in SlideGenerator._STOP and len(low) > 3:
+                    unigrams.append(low)
+            for i in range(len(words) - 1):
+                a, b = words[i].lower(), words[i + 1].lower()
+                if (a not in SlideGenerator._STOP
+                        and b not in SlideGenerator._STOP
+                        and len(a) > 2 and len(b) > 2):
+                    bigrams.append(f"{a} {b}")
+
+        seen: set[str] = set()
+        ordered: list[str] = []
+        for t in bigrams + unigrams:
+            if t not in seen:
+                seen.add(t)
+                ordered.append(t)
+
+        if not ordered:
+            return body, bullets
+
+        def wrap(text: str, limit: int = 2) -> str:
+            if not text:
+                return text
+            n = 0
+            for term in ordered:
+                if n >= limit:
+                    break
+                pat = re.compile(
+                    r"\b(" + re.escape(term) + r")\b", re.IGNORECASE,
+                )
+                if pat.search(text):
+                    text = pat.sub(r"[[\1]]", text, count=1)
+                    n += 1
+            return text
+
+        return wrap(body, 2), [wrap(b, 1) for b in bullets]

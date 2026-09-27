@@ -1,16 +1,24 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useParams } from "react-router-dom";
+import { Download, Pencil, Zap, Trash2, Check } from "lucide-react";
 import { useDeck } from "../hooks/useDeck";
-import SlideList from "../components/SlideList";
-import SlideFeedback from "../components/SlideFeedback";
-import StreamingIndicator from "../components/StreamingIndicator";
-import ProcessingSteps from "../components/ProcessingSteps";
-import StatusBadge from "../components/StatusBadge";
-import ExportButton from "../components/ExportButton";
+import { AppShell } from "../components/layout/AppShell";
+import { ThemeToggle } from "../components/ui/ThemeToggle";
+import { Badge } from "../components/ui/Badge";
+import { Button } from "../components/ui/Button";
+import { Card } from "../components/ui/Card";
+import { ChatComposer } from "../components/feedback/ChatComposer";
+import { ProgressStepper, type Stage } from "../components/progress/ProgressStepper";
+import { SlideProgress } from "../components/progress/SlideProgress";
 import * as api from "../services/api";
 import type { SlideItem, SSEEvent } from "../types";
 
 type Phase = "idle" | "retrieving" | "outlining" | "generating" | "done" | "error";
+
+interface ChatMsg {
+  from: "user" | "system";
+  text: string;
+}
 
 export default function GenerationPage() {
   const { deckId } = useParams<{ deckId: string }>();
@@ -22,9 +30,22 @@ export default function GenerationPage() {
   const [totalSlides, setTotalSlides] = useState(0);
   const [feedbackLoading, setFeedbackLoading] = useState(false);
   const [feedbackRoundCount, setFeedbackRoundCount] = useState(0);
+  const [activeSlide, setActiveSlide] = useState(0);
+  const [messages, setMessages] = useState<ChatMsg[]>([]);
+  const [exporting, setExporting] = useState(false);
+  const [exportError, setExportError] = useState<string | null>(null);
+  const [startTime] = useState(() => Date.now());
+  const [elapsed, setElapsed] = useState(0);
   const abortRef = useRef<AbortController | null>(null);
   const startedRef = useRef<string | null>(null);
   const currentSlideMetaRef = useRef<{ position: number } | null>(null);
+
+  useEffect(() => {
+    if (phase !== "done" && phase !== "idle" && phase !== "error") {
+      const timer = setInterval(() => setElapsed(Math.floor((Date.now() - startTime) / 1000)), 1000);
+      return () => clearInterval(timer);
+    }
+  }, [phase, startTime]);
 
   const handleSSEEvent = useCallback(
     (evt: SSEEvent) => {
@@ -68,8 +89,6 @@ export default function GenerationPage() {
           break;
         case "generation_error":
           setError(data.error as string || "Generation error");
-          setPhase("error");
-          setGeneratingSlideId(null);
           break;
         case "error":
           setPhase("error");
@@ -101,13 +120,11 @@ export default function GenerationPage() {
         currentDeck.status === "generating_outline" ||
         currentDeck.status === "generating_slides"
       ) {
-        // Step 1: Retrieve
         if (currentDeck.status === "ready_for_retrieval") {
           setPhase("retrieving");
           await api.triggerRetrieval(deckId);
         }
 
-        // Step 2: Outline
         const afterRetrieval = await api.getDeck(deckId);
         setDeck(afterRetrieval);
         if (
@@ -119,7 +136,6 @@ export default function GenerationPage() {
           setTotalSlides(outlineRes.slide_count);
         }
 
-        // Step 3: Generate slides via SSE
         const afterOutline = await api.getDeck(deckId);
         setDeck(afterOutline);
         if (
@@ -156,6 +172,7 @@ export default function GenerationPage() {
       setFeedbackLoading(true);
       setError(null);
       setPhase("generating");
+      setMessages((m) => [...m, { from: "user", text: feedback }]);
 
       abortRef.current?.abort();
       abortRef.current = api.streamSlideFeedback(
@@ -166,9 +183,11 @@ export default function GenerationPage() {
           if (evt.event === "generation_complete") {
             setFeedbackLoading(false);
             setFeedbackRoundCount((c) => c + 1);
+            setMessages((m) => [...m, { from: "system", text: "Slides updated successfully." }]);
           }
           if (evt.event === "generation_error" || evt.event === "error") {
             setFeedbackLoading(false);
+            setMessages((m) => [...m, { from: "system", text: "Error updating slides." }]);
           }
         },
       );
@@ -185,6 +204,7 @@ export default function GenerationPage() {
       await fetchDeck();
       await fetchSlides();
       setFeedbackRoundCount((c) => Math.max(0, c - 1));
+      setMessages((m) => [...m, { from: "system", text: "Undo applied." }]);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Undo failed");
     } finally {
@@ -197,7 +217,6 @@ export default function GenerationPage() {
     setError(null);
     setPhase("generating");
     abortRef.current?.abort();
-
     try {
       await fetchSlides();
       abortRef.current = api.streamSlideGeneration(deckId, handleSSEEvent);
@@ -207,118 +226,319 @@ export default function GenerationPage() {
     }
   }, [deckId, setError, fetchSlides, handleSSEEvent]);
 
-  const steps = [
+  const handleExport = async () => {
+    if (!deckId) return;
+    setExporting(true);
+    setExportError(null);
+    try {
+      await api.exportDeck(deckId);
+      window.open(`/api/decks/${deckId}/export/download`, "_blank");
+    } catch (e) {
+      setExportError(e instanceof Error ? e.message : "Export failed");
+    } finally {
+      setExporting(false);
+    }
+  };
+
+  const isDone = phase === "done" || deck?.status === "completed";
+  const isProcessing = phase !== "done" && phase !== "idle" && phase !== "error";
+
+  const sortedSlides = [...slides].sort((a, b) => a.position - b.position);
+  const currentSlide = sortedSlides[activeSlide];
+
+  const formatElapsed = (s: number) => {
+    const m = Math.floor(s / 60);
+    const sec = s % 60;
+    return m > 0 ? `${m}m ${sec}s` : `${sec}s`;
+  };
+
+  // Processing view stages
+  const stages: Stage[] = [
     {
-      label: "Retrieving relevant content...",
+      id: "retrieve",
+      title: "Retrieving relevant content",
+      detail: phase === "retrieving" ? `${formatElapsed(elapsed)}` : phase !== "idle" ? "done" : "",
       state:
         phase === "retrieving"
-          ? ("active" as const)
-          : phase === "outlining" ||
-              phase === "generating" ||
-              phase === "done"
-            ? ("done" as const)
-            : phase === "error"
-              ? ("error" as const)
-              : ("pending" as const),
+          ? "active"
+          : ["outlining", "generating", "done"].includes(phase)
+          ? "done"
+          : phase === "error"
+          ? "error"
+          : "pending",
     },
     {
-      label: "Generating slide outline...",
+      id: "outline",
+      title: "Generating slide outline",
+      detail: phase === "outlining" ? `${formatElapsed(elapsed)}` : totalSlides > 0 ? `${totalSlides} slides mapped` : "",
       state:
         phase === "outlining"
-          ? ("active" as const)
-          : phase === "generating" || phase === "done"
-            ? ("done" as const)
-            : phase === "error"
-              ? ("error" as const)
-              : ("pending" as const),
+          ? "active"
+          : ["generating", "done"].includes(phase)
+          ? "done"
+          : phase === "error"
+          ? "error"
+          : "pending",
     },
     {
-      label: "Generating slides...",
+      id: "slides",
+      title: "Writing your slides",
+      detail: phase === "generating" ? "streaming..." : isDone ? "complete" : "",
       state:
         phase === "generating"
-          ? ("active" as const)
-          : phase === "done"
-            ? ("done" as const)
-            : ("pending" as const),
+          ? "active"
+          : isDone
+          ? "done"
+          : "pending",
+      content:
+        phase === "generating" ? (
+          <SlideProgress
+            completed={slides.length}
+            total={totalSlides || slides.length}
+            slideTitles={sortedSlides.map((s) => s.title)}
+          />
+        ) : undefined,
     },
   ];
 
   if (loading) {
     return (
-      <div className="flex min-h-[50vh] items-center justify-center">
-        <span className="inline-block h-8 w-8 animate-spin rounded-full border-4 border-blue-600 border-t-transparent" />
-      </div>
+      <AppShell navRight={<ThemeToggle />}>
+        <div className="flex min-h-[50vh] items-center justify-center">
+          <div className="w-8 h-8 rounded-full border-[3px] border-line border-t-accent animate-spin" />
+        </div>
+      </AppShell>
     );
   }
 
-  const isDone = phase === "done" || deck?.status === "completed";
-  const isGenerating = phase === "generating";
+  // Processing view (before done)
+  if (isProcessing) {
+    return (
+      <AppShell navRight={<ThemeToggle />}>
+        <div className="flex items-center justify-between mb-1.5">
+          <div>
+            <h1 className="font-heading font-bold text-[26px] text-ink">
+              {deck?.syllabus?.title || "Generating Presentation"}
+            </h1>
+            <p className="text-[13.5px] text-ink2 mt-1">
+              Started {formatElapsed(elapsed)} ago
+            </p>
+          </div>
+          <Badge tone="accent">IN PROGRESS</Badge>
+        </div>
 
-  return (
-    <div className="mx-auto max-w-3xl px-4 py-8">
-      <div className="mb-6 flex items-center justify-between">
-        <h1 className="text-2xl font-bold text-gray-900">
+        <Card className="p-7 max-w-[760px] mt-6">
+          <ProgressStepper stages={stages} />
+        </Card>
+
+        {error && (
+          <div className="max-w-[760px] mt-4 rounded-2xl bg-warn-bg border border-line p-3 text-sm text-warn">
+            {error}
+          </div>
+        )}
+      </AppShell>
+    );
+  }
+
+  // Error view
+  if (phase === "error") {
+    return (
+      <AppShell navRight={<ThemeToggle />}>
+        <h1 className="font-heading font-bold text-[26px] text-ink mb-4">
           {deck?.syllabus?.title || "Presentation"}
         </h1>
-        {deck && <StatusBadge status={deck.status} />}
-      </div>
-
-      {phase !== "done" && phase !== "idle" && (
-        <div className="mb-6">
-          <ProcessingSteps steps={steps} />
-        </div>
-      )}
-
-      {isGenerating && (
-        <div className="mb-6">
-          <StreamingIndicator
-            total={totalSlides || slides.length}
-            generated={slides.length}
-            currentSlide={generatingSlideId}
-          />
-        </div>
-      )}
-
-      <div className="mb-6">
-        <SlideList slides={slides} generatingSlideId={generatingSlideId} />
-      </div>
-
-      {phase === "error" && (
-        <div className="mb-6 space-y-2">
-          <div className="rounded-md bg-red-50 p-3 text-sm text-red-700">
+        <Card className="p-7 max-w-[760px]">
+          <ProgressStepper stages={stages} />
+        </Card>
+        <div className="max-w-[760px] mt-4 space-y-3">
+          <div className="rounded-2xl bg-warn-bg border border-line p-3 text-sm text-warn">
             {error || "An error occurred."}
           </div>
-          <button
-            onClick={handleResume}
-            className="rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700"
+          <Button onClick={handleResume}>Resume Generation</Button>
+        </div>
+      </AppShell>
+    );
+  }
+
+  // Slide review view (done)
+  return (
+    <AppShell
+      navRight={
+        <>
+          <ThemeToggle />
+          {feedbackRoundCount > 0 && (
+            <Badge tone="success">{feedbackRoundCount} update{feedbackRoundCount > 1 ? "s" : ""}</Badge>
+          )}
+          <Button
+            icon={<Download size={15} />}
+            size="sm"
+            onClick={handleExport}
+            disabled={exporting}
           >
-            Resume Generation
-          </button>
+            {exporting ? "Exporting..." : "Export .pptx"}
+          </Button>
+        </>
+      }
+    >
+      {exportError && (
+        <div className="rounded-2xl bg-warn-bg border border-line p-3 text-sm text-warn mb-4">
+          {exportError}
         </div>
       )}
 
-      {error && phase !== "error" && (
-        <div className="mb-6 rounded-md bg-red-50 p-3 text-sm text-red-700">
+      {error && (
+        <div className="rounded-2xl bg-warn-bg border border-line p-3 text-sm text-warn mb-4">
           {error}
         </div>
       )}
 
-      {isDone && (
-        <>
-          <div className="mb-6">
-            <SlideFeedback
-              onSubmit={handleSlideFeedback}
-              onUndo={handleUndo}
-              disabled={feedbackLoading}
-              loading={feedbackLoading}
-              canUndo={feedbackRoundCount > 0}
-            />
-          </div>
-          <div className="flex justify-end">
-            <ExportButton deckId={deckId!} />
-          </div>
-        </>
+      {/* Slide thumbnail strip */}
+      {sortedSlides.length > 0 && (
+        <div className="flex gap-2.5 overflow-x-auto pb-4 mb-1.5">
+          {sortedSlides.map((slide, i) => {
+            const isActive = i === activeSlide;
+            return (
+              <button
+                key={slide.slide_id}
+                onClick={() => setActiveSlide(i)}
+                className={`rounded-2xl overflow-hidden border-2 flex-shrink-0 w-[130px] text-left transition-colors ${
+                  isActive ? "border-accent bg-accent-bg" : "border-line bg-surface2"
+                }`}
+              >
+                <div className="h-[70px] bg-[#FAF3E7] flex items-center justify-center text-[#A79680] text-[10px]">
+                  Slide {i + 1}
+                </div>
+                <div
+                  className={`px-2 py-1.5 text-[10.5px] truncate ${
+                    isActive ? "text-ink font-bold" : "text-ink2 font-semibold"
+                  }`}
+                >
+                  {slide.title}
+                </div>
+              </button>
+            );
+          })}
+        </div>
       )}
-    </div>
+
+      {/* Slide content + sidebar */}
+      <div className="flex gap-6 items-start">
+        <div className="flex-1">
+          {currentSlide ? (
+            <div className="bg-[#FAF3E7] border border-line rounded-2xl p-12 flex flex-col gap-4.5 justify-center min-h-[340px]">
+              <div
+                className="text-[26px] font-bold text-[#2F4B3C]"
+                style={{ fontFamily: "Georgia, serif" }}
+              >
+                {currentSlide.title}
+              </div>
+              {currentSlide.body && (
+                <p className="text-[15px] text-[#3B3025] leading-relaxed whitespace-pre-wrap">
+                  {currentSlide.body}
+                </p>
+              )}
+              {currentSlide.bullet_points.length > 0 && (
+                <div className="flex flex-col gap-3">
+                  {currentSlide.bullet_points.map((bp, i) => (
+                    <div
+                      key={i}
+                      className="text-[15px] text-[#3B3025] leading-relaxed pl-4 relative before:content-['•'] before:absolute before:left-0"
+                    >
+                      {bp}
+                    </div>
+                  ))}
+                </div>
+              )}
+              {currentSlide.table_data && currentSlide.table_data.headers.length > 0 && (
+                <div className="overflow-x-auto">
+                  <table className="min-w-full text-sm text-[#3B3025]">
+                    <thead>
+                      <tr className="border-b border-[#2F4B3C]/20">
+                        {currentSlide.table_data.headers.map((h, i) => (
+                          <th key={i} className="px-3 py-2 text-left font-bold text-[#2F4B3C]">
+                            {h}
+                          </th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {currentSlide.table_data.rows.map((row, i) => (
+                        <tr key={i} className="border-b border-[#2F4B3C]/10">
+                          {row.map((cell, j) => (
+                            <td key={j} className="px-3 py-2">{cell}</td>
+                          ))}
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+          ) : (
+            <div className="bg-surface2 border border-line rounded-2xl p-12 min-h-[340px] flex items-center justify-center">
+              <p className="text-ink3">No slides generated yet.</p>
+            </div>
+          )}
+        </div>
+
+        {/* Right sidebar */}
+        <div className="w-[300px] flex-shrink-0 flex flex-col gap-4 sticky top-9 hidden lg:flex">
+          {currentSlide && (
+            <Card className="p-4.5">
+              <div className="font-heading font-bold text-[14px] text-ink mb-2.5">
+                Slide {activeSlide + 1} of {sortedSlides.length}
+              </div>
+              {currentSlide.speaker_notes && (
+                <p className="text-xs text-ink3 mb-3 italic">{currentSlide.speaker_notes}</p>
+              )}
+              <div className="text-xs text-ink3">
+                Layout: {currentSlide.layout_hint}
+              </div>
+            </Card>
+          )}
+
+          <Card className="p-4.5 flex flex-col gap-3">
+            <div className="font-heading font-bold text-[14px] text-ink">
+              Feedback
+            </div>
+            {messages.length > 0 && (
+              <div className="flex flex-col gap-2 max-h-[220px] overflow-y-auto pr-1">
+                {messages.map((m, i) => (
+                  <div
+                    key={i}
+                    className={`rounded-2xl px-3.5 py-2.5 text-[12.5px] max-w-[240px] flex items-start gap-1.5 ${
+                      m.from === "user"
+                        ? "bg-accent-bg text-ink"
+                        : "bg-surface border border-line text-ink2"
+                    }`}
+                  >
+                    {m.from === "system" && (
+                      <Check size={13} className="text-success mt-0.5 flex-shrink-0" aria-hidden />
+                    )}
+                    <span>{m.text}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+            <ChatComposer
+              placeholder="Ask for a change..."
+              onSend={handleSlideFeedback}
+              disabled={feedbackLoading}
+            />
+            {feedbackRoundCount > 0 && (
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={handleUndo}
+                disabled={feedbackLoading}
+                className="self-start"
+              >
+                Undo Last
+              </Button>
+            )}
+          </Card>
+        </div>
+      </div>
+    </AppShell>
   );
 }

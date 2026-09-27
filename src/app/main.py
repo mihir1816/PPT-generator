@@ -60,9 +60,10 @@ async def lifespan(app: FastAPI):
 
     storage_service = StorageService(minio_client, settings.MINIO_BUCKET)
 
-    embedding_service = EmbeddingService(
-        model_name=settings.EMBEDDING_MODEL,
-        dimension=settings.EMBEDDING_DIMENSION,
+    embedding_service = await asyncio.to_thread(
+        EmbeddingService,
+        settings.EMBEDDING_MODEL,
+        settings.EMBEDDING_DIMENSION,
     )
 
     vector_store = VectorStoreService(
@@ -88,7 +89,7 @@ async def lifespan(app: FastAPI):
     app.state.sparse_index = sparse_index
     syllabus_service = SyllabusService(llm_client)
 
-    reranker = RerankerService()
+    reranker = await asyncio.to_thread(RerankerService)
 
     rag_service = RAGService(
         llm=llm_client,

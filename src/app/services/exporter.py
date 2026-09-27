@@ -1,40 +1,78 @@
 import io
 import logging
+import math
+import re
 from datetime import datetime, timezone
+from typing import List, Tuple
 
 from pptx import Presentation
 from pptx.dml.color import RGBColor
-from pptx.enum.text import PP_ALIGN
+from pptx.enum.text import PP_ALIGN, MSO_ANCHOR
+from pptx.enum.shapes import MSO_SHAPE
+from pptx.oxml.ns import qn
 from pptx.util import Emu, Inches, Pt
 
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
-# Theme constants
+# Chalkline Warmth theme — all visual tunables in one place
 # ---------------------------------------------------------------------------
 
-COLOR_PRIMARY = RGBColor(0x1E, 0x29, 0x3B)     # dark navy for text
-COLOR_ACCENT = RGBColor(0x25, 0x63, 0xEB)       # blue accent
-COLOR_LIGHT = RGBColor(0xFF, 0xFF, 0xFF)         # white
-COLOR_MUTED = RGBColor(0x64, 0x74, 0x8B)         # gray for subtitles
-COLOR_TABLE_HEADER = RGBColor(0x1E, 0x40, 0xAF)  # darker blue for table headers
-COLOR_TABLE_ALT = RGBColor(0xF1, 0xF5, 0xF9)     # light gray alternating rows
-COLOR_BORDER = RGBColor(0xCB, 0xD5, 0xE1)        # light border
-COLOR_PLACEHOLDER_BG = RGBColor(0xF8, 0xFA, 0xFC) # very light bg for placeholders
-
-FONT_TITLE = "Calibri"
-FONT_BODY = "Calibri"
+THEME = {
+    "colors": {
+        "background": RGBColor(0xFA, 0xF3, 0xE7),
+        "panel": RGBColor(0x2F, 0x4B, 0x3C),
+        "panel_text": RGBColor(0xFA, 0xF3, 0xE7),
+        "accent": RGBColor(0xE4, 0x63, 0x3F),
+        "heading_text": RGBColor(0x2F, 0x4B, 0x3C),
+        "body_text": RGBColor(0x3B, 0x30, 0x25),
+        "subtitle_text": RGBColor(0x6B, 0x5B, 0x4C),
+        "footer_text": RGBColor(0x9C, 0x8C, 0x79),
+        "card_fill": RGBColor(0xFF, 0xFF, 0xFF),
+        "card_border": RGBColor(0xEC, 0xE0, 0xCC),
+        "highlight": "FFE066",
+        "table_header": RGBColor(0x2F, 0x4B, 0x3C),
+        "table_alt": RGBColor(0xF5, 0xEE, 0xE2),
+    },
+    "fonts": {
+        "heading": "Georgia",
+        "body": "Trebuchet MS",
+    },
+    "sizes": {
+        "title": Pt(44),
+        "subtitle": Pt(18),
+        "content_heading": Pt(28),
+        "body": Pt(16),
+        "tag": Pt(12),
+        "footer": Pt(11),
+        "table_header": Pt(14),
+        "table_body": Pt(13),
+    },
+}
 
 SLIDE_WIDTH = Inches(13.333)
 SLIDE_HEIGHT = Inches(7.5)
+MARGIN = Inches(0.9)
 
-MARGIN_LEFT = Inches(0.8)
-MARGIN_TOP = Inches(0.6)
-CONTENT_WIDTH = Inches(11.7)
-TITLE_HEIGHT = Inches(1.0)
-BODY_TOP = Inches(1.8)
-BODY_HEIGHT = Inches(5.0)
+# ---------------------------------------------------------------------------
+# Spacing constants — tweak these to fix layout globally
+# ---------------------------------------------------------------------------
 
+SPACING = {
+    "slide_top": Inches(0.5),
+    "slide_bottom": Inches(0.45),
+    "element_gap": Inches(0.2),
+    "title_top": Inches(0.7),
+    "tag_h": Inches(0.42),
+    "accent_bar_h": Inches(0.07),
+    "heading_gap": Inches(0.15),
+    "body_to_card_gap": Inches(0.3),
+    "card_gap": Inches(0.15),
+    "card_min_h": Inches(0.65),
+    "card_max_h": Inches(1.2),
+    "card_pad_x": Inches(0.4),
+    "card_pad_y": Inches(0.12),
+}
 
 LAYOUT_MAP = {
     "title": "_add_title_slide",
@@ -44,6 +82,124 @@ LAYOUT_MAP = {
     "section_header": "_add_section_header_slide",
     "image_placeholder": "_add_image_placeholder_slide",
 }
+
+# ---------------------------------------------------------------------------
+# Text height estimation — avoids hardcoded overlap
+# ---------------------------------------------------------------------------
+
+def _estimate_text_height(text: str, font_size_emu: int, box_width_emu: int) -> int:
+    font_pt = font_size_emu / 12700
+    box_width_in = box_width_emu / 914400
+    chars_per_line = max(1, int(box_width_in * (72 / font_pt) * 1.6))
+    num_lines = max(1, math.ceil(len(text) / chars_per_line))
+    line_height_emu = int(font_size_emu * 1.45)
+    return num_lines * line_height_emu
+
+
+# ---------------------------------------------------------------------------
+# Emphasis markup: LLM wraps important terms in [[double brackets]]
+# ---------------------------------------------------------------------------
+
+_EMPHASIS_RE = re.compile(r"\[\[(.+?)\]\]")
+
+
+def parse_emphasis(raw_text: str) -> Tuple[str, List[Tuple[int, int]]]:
+    clean_parts: List[str] = []
+    spans: List[Tuple[int, int]] = []
+    cursor = 0
+    pos = 0
+    for m in _EMPHASIS_RE.finditer(raw_text):
+        clean_parts.append(raw_text[pos:m.start()])
+        cursor += len(raw_text[pos:m.start()])
+        term = m.group(1)
+        spans.append((cursor, cursor + len(term)))
+        clean_parts.append(term)
+        cursor += len(term)
+        pos = m.end()
+    clean_parts.append(raw_text[pos:])
+    return "".join(clean_parts), spans
+
+
+def _add_run_highlight(run, hex_color: str) -> None:
+    rPr = run._r.get_or_add_rPr()
+    existing = rPr.find(qn("a:highlight"))
+    if existing is not None:
+        rPr.remove(existing)
+    highlight = rPr.makeelement(qn("a:highlight"), {})
+    srgb = highlight.makeelement(qn("a:srgbClr"), {"val": hex_color})
+    highlight.append(srgb)
+    follow_tags = (
+        "a:uLnTx", "a:uLn", "a:uFillTx", "a:uFill",
+        "a:latin", "a:ea", "a:cs", "a:sym",
+        "a:hlinkClick", "a:hlinkMouseOver", "a:rtl", "a:extLst",
+    )
+    anchor = next(
+        (rPr.find(qn(t)) for t in follow_tags if rPr.find(qn(t)) is not None),
+        None,
+    )
+    if anchor is not None:
+        anchor.addprevious(highlight)
+    else:
+        rPr.append(highlight)
+
+
+def _add_runs_with_emphasis(paragraph, raw_text: str, *, font_size=None,
+                            font_name=None, font_color=None, bold=False):
+    clean_text, spans = parse_emphasis(raw_text)
+    if font_size is None:
+        font_size = THEME["sizes"]["body"]
+    if font_name is None:
+        font_name = THEME["fonts"]["body"]
+    if font_color is None:
+        font_color = THEME["colors"]["body_text"]
+
+    cursor, span_i = 0, 0
+    while cursor < len(clean_text):
+        if span_i < len(spans) and spans[span_i][0] == cursor:
+            start, end = spans[span_i]
+            run = paragraph.add_run()
+            run.text = clean_text[start:end]
+            run.font.bold = True
+            run.font.name = font_name
+            run.font.size = font_size
+            run.font.color.rgb = font_color
+            _add_run_highlight(run, THEME["colors"]["highlight"])
+            cursor = end
+            span_i += 1
+        else:
+            nxt = spans[span_i][0] if span_i < len(spans) else len(clean_text)
+            run = paragraph.add_run()
+            run.text = clean_text[cursor:nxt]
+            run.font.bold = bold
+            run.font.name = font_name
+            run.font.size = font_size
+            run.font.color.rgb = font_color
+            cursor = nxt
+
+
+# ---------------------------------------------------------------------------
+# Shared slide helpers
+# ---------------------------------------------------------------------------
+
+def _fill_background(slide, prs):
+    bg = slide.shapes.add_shape(MSO_SHAPE.RECTANGLE, 0, 0,
+                                prs.slide_width, prs.slide_height)
+    bg.fill.solid()
+    bg.fill.fore_color.rgb = THEME["colors"]["background"]
+    bg.line.fill.background()
+    bg.shadow.inherit = False
+    spTree = bg._element.getparent()
+    spTree.remove(bg._element)
+    spTree.insert(2, bg._element)
+
+
+def _compute_card_height(num_bullets: int, available_emu: int) -> int:
+    if num_bullets <= 0:
+        return int(SPACING["card_min_h"])
+    total_gaps = (num_bullets - 1) * int(SPACING["card_gap"])
+    per_card = (available_emu - total_gaps) / num_bullets
+    return max(int(SPACING["card_min_h"]),
+               min(int(SPACING["card_max_h"]), int(per_card)))
 
 
 class PPTXExporter:
@@ -76,97 +232,251 @@ class PPTXExporter:
         return f"{safe}_{ts}.pptx"
 
     # ------------------------------------------------------------------
-    # Layout builders
+    # Title slide — tag pill, large title, coral accent bar, subtitle
     # ------------------------------------------------------------------
 
     def _add_title_slide(self, prs: Presentation, data) -> None:
-        slide = prs.slides.add_slide(prs.slide_layouts[6])  # blank
+        slide = prs.slides.add_slide(prs.slide_layouts[6])
+        _fill_background(slide, prs)
+        m = MARGIN
+        content_w = prs.slide_width - 2 * m
+        gap = int(SPACING["element_gap"])
+        cursor = int(SPACING["title_top"])
 
-        # Title
-        title_box = slide.shapes.add_textbox(
-            MARGIN_LEFT, Inches(2.2), CONTENT_WIDTH, Inches(1.5),
+        # Tag pill
+        tag_h = int(SPACING["tag_h"])
+        tag = slide.shapes.add_shape(
+            MSO_SHAPE.ROUNDED_RECTANGLE, m, cursor,
+            Inches(3.6), tag_h,
         )
+        tag.adjustments[0] = 0.5
+        tag.fill.solid()
+        tag.fill.fore_color.rgb = THEME["colors"]["panel"]
+        tag.line.fill.background()
+        tag.shadow.inherit = False
+        tf = tag.text_frame
+        tf.word_wrap = True
+        tf.paragraphs[0].alignment = PP_ALIGN.CENTER
+        r = tf.paragraphs[0].add_run()
+        r.text = "PRESENTATION"
+        r.font.size = THEME["sizes"]["tag"]
+        r.font.bold = True
+        r.font.color.rgb = THEME["colors"]["panel_text"]
+        r.font.name = THEME["fonts"]["body"]
+        cursor += tag_h + gap
+
+        # Title — height estimated from text length
+        title_font = THEME["sizes"]["title"]
+        title_h = _estimate_text_height(data.title, int(title_font), int(content_w))
+        title_h = max(title_h, int(Inches(0.8)))
+        title_box = slide.shapes.add_textbox(m, cursor, content_w, title_h)
         tf = title_box.text_frame
         tf.word_wrap = True
         p = tf.paragraphs[0]
-        p.text = data.title
-        p.font.size = Pt(40)
-        p.font.bold = True
-        p.font.color.rgb = COLOR_PRIMARY
-        p.font.name = FONT_TITLE
-        p.alignment = PP_ALIGN.CENTER
+        r = p.add_run()
+        r.text = data.title
+        r.font.size = title_font
+        r.font.bold = True
+        r.font.name = THEME["fonts"]["heading"]
+        r.font.color.rgb = THEME["colors"]["heading_text"]
+        cursor += title_h + gap
 
-        # Subtitle / body
+        # Coral accent bar
+        bar_h = int(SPACING["accent_bar_h"])
+        bar = slide.shapes.add_shape(
+            MSO_SHAPE.ROUNDED_RECTANGLE, m, cursor,
+            Inches(1.4), bar_h,
+        )
+        bar.fill.solid()
+        bar.fill.fore_color.rgb = THEME["colors"]["accent"]
+        bar.line.fill.background()
+        bar.shadow.inherit = False
+        cursor += bar_h + gap
+
+        # Subtitle
         if data.body:
-            sub_box = slide.shapes.add_textbox(
-                MARGIN_LEFT, Inches(4.0), CONTENT_WIDTH, Inches(1.2),
-            )
-            tf2 = sub_box.text_frame
-            tf2.word_wrap = True
-            p2 = tf2.paragraphs[0]
-            p2.text = data.body
-            p2.font.size = Pt(20)
-            p2.font.color.rgb = COLOR_MUTED
-            p2.font.name = FONT_BODY
-            p2.alignment = PP_ALIGN.CENTER
+            sub_h = _estimate_text_height(data.body, int(THEME["sizes"]["subtitle"]),
+                                          int(Inches(9.5)))
+            sub_h = max(sub_h, int(Inches(0.5)))
+            sub_box = slide.shapes.add_textbox(m, cursor, Inches(9.5), sub_h)
+            tf = sub_box.text_frame
+            tf.word_wrap = True
+            p = tf.paragraphs[0]
+            r = p.add_run()
+            r.text = data.body
+            r.font.italic = True
+            r.font.size = THEME["sizes"]["subtitle"]
+            r.font.name = THEME["fonts"]["body"]
+            r.font.color.rgb = THEME["colors"]["subtitle_text"]
 
         self._add_speaker_notes(slide, data.speaker_notes)
+
+    # ------------------------------------------------------------------
+    # Bullet slide — heading + card-based bullets with emphasis
+    # ------------------------------------------------------------------
 
     def _add_bullet_slide(self, prs: Presentation, data) -> None:
         slide = prs.slides.add_slide(prs.slide_layouts[6])
-        self._add_slide_title(slide, data.title)
+        _fill_background(slide, prs)
+        m = MARGIN
+        content_w = prs.slide_width - 2 * m
+        cursor = int(SPACING["slide_top"])
+        bottom = int(SLIDE_HEIGHT) - int(SPACING["slide_bottom"])
 
-        body_box = slide.shapes.add_textbox(
-            MARGIN_LEFT, BODY_TOP, CONTENT_WIDTH, BODY_HEIGHT,
-        )
-        tf = body_box.text_frame
+        # Heading
+        heading_font = THEME["sizes"]["content_heading"]
+        heading_h = _estimate_text_height(data.title, int(heading_font), int(content_w))
+        heading_h = max(heading_h, int(Inches(0.6)))
+        head_box = slide.shapes.add_textbox(m, cursor, content_w, heading_h)
+        tf = head_box.text_frame
         tf.word_wrap = True
+        p = tf.paragraphs[0]
+        r = p.add_run()
+        r.text = data.title
+        r.font.size = heading_font
+        r.font.bold = True
+        r.font.name = THEME["fonts"]["heading"]
+        r.font.color.rgb = THEME["colors"]["heading_text"]
+        cursor += heading_h + int(SPACING["heading_gap"])
 
-        first_para_used = False
+        # Body text (optional)
         if data.body:
+            body_font = THEME["sizes"]["body"]
+            body_h = _estimate_text_height(data.body, int(body_font), int(content_w))
+            body_h = max(body_h, int(Inches(0.4)))
+            body_box = slide.shapes.add_textbox(m, cursor, content_w, body_h)
+            tf = body_box.text_frame
+            tf.word_wrap = True
             p = tf.paragraphs[0]
-            p.text = data.body
-            self._style_body(p)
-            first_para_used = True
+            _add_runs_with_emphasis(
+                p, data.body,
+                font_color=THEME["colors"]["subtitle_text"],
+            )
+            cursor += body_h + int(SPACING["body_to_card_gap"])
+        else:
+            cursor += int(SPACING["element_gap"])
 
+        # Bullet cards — sized dynamically to fill remaining space
         bullets = data.bullet_points or []
-        for point in bullets:
-            if first_para_used:
-                p = tf.add_paragraph()
-            else:
-                p = tf.paragraphs[0]
-                first_para_used = True
-            p.text = point
-            p.font.size = Pt(18)
-            p.font.color.rgb = COLOR_PRIMARY
-            p.font.name = FONT_BODY
-            p.level = 0
-            p.space_after = Pt(8)
+        if not bullets:
+            self._add_speaker_notes(slide, data.speaker_notes)
+            return
+
+        available = bottom - cursor
+        card_h = _compute_card_height(len(bullets), available)
+        card_gap = int(SPACING["card_gap"])
+
+        for i, bullet_raw in enumerate(bullets):
+            top = cursor + i * (card_h + card_gap)
+            if top + card_h > bottom:
+                break
+
+            card = slide.shapes.add_shape(
+                MSO_SHAPE.ROUNDED_RECTANGLE, m, top, content_w, card_h,
+            )
+            card.adjustments[0] = 0.12
+            card.fill.solid()
+            card.fill.fore_color.rgb = THEME["colors"]["card_fill"]
+            card.line.color.rgb = THEME["colors"]["card_border"]
+            card.line.width = Pt(1)
+            card.shadow.inherit = False
+
+            tf = card.text_frame
+            tf.word_wrap = True
+            tf.vertical_anchor = MSO_ANCHOR.MIDDLE
+            tf.margin_left = int(SPACING["card_pad_x"])
+            tf.margin_right = int(SPACING["card_pad_x"])
+            tf.margin_top = int(SPACING["card_pad_y"])
+            tf.margin_bottom = int(SPACING["card_pad_y"])
+
+            p = tf.paragraphs[0]
+            lead = p.add_run()
+            lead.text = "✓  "
+            lead.font.bold = True
+            lead.font.color.rgb = THEME["colors"]["accent"]
+            lead.font.size = THEME["sizes"]["body"]
+            lead.font.name = THEME["fonts"]["body"]
+
+            _add_runs_with_emphasis(p, bullet_raw)
 
         self._add_speaker_notes(slide, data.speaker_notes)
+
+    # ------------------------------------------------------------------
+    # Two-column slide
+    # ------------------------------------------------------------------
 
     def _add_two_column_slide(self, prs: Presentation, data) -> None:
         slide = prs.slides.add_slide(prs.slide_layouts[6])
-        self._add_slide_title(slide, data.title)
+        _fill_background(slide, prs)
+        m = MARGIN
+        content_w = prs.slide_width - 2 * m
+        cursor = int(SPACING["slide_top"])
+        bottom = int(SLIDE_HEIGHT) - int(SPACING["slide_bottom"])
+        col_gap = Inches(0.4)
 
-        col_width = Inches(5.5)
-        gap = Inches(0.7)
+        # Heading
+        heading_font = THEME["sizes"]["content_heading"]
+        heading_h = _estimate_text_height(data.title, int(heading_font), int(content_w))
+        heading_h = max(heading_h, int(Inches(0.6)))
+        head_box = slide.shapes.add_textbox(m, cursor, content_w, heading_h)
+        tf = head_box.text_frame
+        tf.word_wrap = True
+        p = tf.paragraphs[0]
+        r = p.add_run()
+        r.text = data.title
+        r.font.size = heading_font
+        r.font.bold = True
+        r.font.name = THEME["fonts"]["heading"]
+        r.font.color.rgb = THEME["colors"]["heading_text"]
+        cursor += heading_h + int(SPACING["heading_gap"]) + int(SPACING["element_gap"])
 
         bullets = data.bullet_points or []
         mid = (len(bullets) + 1) // 2
-        left_items = bullets[:mid]
-        right_items = bullets[mid:]
+        col_w = (int(content_w) - int(col_gap)) // 2
+        max_per_col = max(mid, len(bullets) - mid, 1)
+        available = bottom - cursor
+        card_h = _compute_card_height(max_per_col, available)
+        card_gap = int(SPACING["card_gap"])
 
-        # Left column
-        left_box = slide.shapes.add_textbox(MARGIN_LEFT, BODY_TOP, col_width, BODY_HEIGHT)
-        self._fill_bullets(left_box.text_frame, left_items, data.body)
+        for col_idx, items in enumerate([bullets[:mid], bullets[mid:]]):
+            left = int(m) + col_idx * (col_w + int(col_gap))
+            for i, bullet_raw in enumerate(items):
+                top = cursor + i * (card_h + card_gap)
+                if top + card_h > bottom:
+                    break
 
-        # Right column
-        right_left = MARGIN_LEFT + col_width + gap
-        right_box = slide.shapes.add_textbox(right_left, BODY_TOP, col_width, BODY_HEIGHT)
-        self._fill_bullets(right_box.text_frame, right_items)
+                card = slide.shapes.add_shape(
+                    MSO_SHAPE.ROUNDED_RECTANGLE, left, top, col_w, card_h,
+                )
+                card.adjustments[0] = 0.12
+                card.fill.solid()
+                card.fill.fore_color.rgb = THEME["colors"]["card_fill"]
+                card.line.color.rgb = THEME["colors"]["card_border"]
+                card.line.width = Pt(1)
+                card.shadow.inherit = False
+
+                tf = card.text_frame
+                tf.word_wrap = True
+                tf.vertical_anchor = MSO_ANCHOR.MIDDLE
+                tf.margin_left = int(SPACING["card_pad_x"])
+                tf.margin_right = int(SPACING["card_pad_x"])
+                tf.margin_top = int(SPACING["card_pad_y"])
+                tf.margin_bottom = int(SPACING["card_pad_y"])
+
+                p = tf.paragraphs[0]
+                lead = p.add_run()
+                lead.text = "✓  "
+                lead.font.bold = True
+                lead.font.color.rgb = THEME["colors"]["accent"]
+                lead.font.size = THEME["sizes"]["body"]
+                lead.font.name = THEME["fonts"]["body"]
+                _add_runs_with_emphasis(p, bullet_raw)
 
         self._add_speaker_notes(slide, data.speaker_notes)
+
+    # ------------------------------------------------------------------
+    # Table slide
+    # ------------------------------------------------------------------
 
     def _add_table_slide(self, prs: Presentation, data) -> None:
         table_data = self._get_table_data(data)
@@ -175,13 +485,30 @@ class PPTXExporter:
             return
 
         slide = prs.slides.add_slide(prs.slide_layouts[6])
-        self._add_slide_title(slide, data.title)
+        _fill_background(slide, prs)
+        m = MARGIN
+        content_w = prs.slide_width - 2 * m
+        cursor = int(SPACING["slide_top"])
+        bottom = int(SLIDE_HEIGHT) - int(SPACING["slide_bottom"])
+
+        heading_font = THEME["sizes"]["content_heading"]
+        heading_h = _estimate_text_height(data.title, int(heading_font), int(content_w))
+        heading_h = max(heading_h, int(Inches(0.6)))
+        head_box = slide.shapes.add_textbox(m, cursor, content_w, heading_h)
+        tf = head_box.text_frame
+        tf.word_wrap = True
+        p = tf.paragraphs[0]
+        r = p.add_run()
+        r.text = data.title
+        r.font.size = heading_font
+        r.font.bold = True
+        r.font.name = THEME["fonts"]["heading"]
+        r.font.color.rgb = THEME["colors"]["heading_text"]
+        cursor += heading_h + int(SPACING["heading_gap"]) + int(SPACING["element_gap"])
 
         headers = table_data.get("headers", [])
         rows = table_data.get("rows", [])
-
         if not headers and not rows:
-            self._add_fallback_body(slide, data)
             self._add_speaker_notes(slide, data.speaker_notes)
             return
 
@@ -189,112 +516,154 @@ class PPTXExporter:
         num_cols = max(len(headers), max((len(r) for r in rows), default=1))
         num_cols = max(num_cols, 1)
 
-        col_w = min(CONTENT_WIDTH / num_cols, Inches(4.0))
-        table_w = Emu(int(col_w) * num_cols)
-        table_h = Inches(0.4) * num_rows
+        col_w = min(int(content_w) // num_cols, int(Inches(4.0)))
+        table_w = col_w * num_cols
+        table_h = min(int(Inches(0.45)) * num_rows, bottom - cursor)
 
         table_shape = slide.shapes.add_table(
-            num_rows, num_cols,
-            MARGIN_LEFT, BODY_TOP, table_w, table_h,
+            num_rows, num_cols, m, cursor, table_w, table_h,
         )
         table = table_shape.table
 
-        # Header row
         for ci in range(num_cols):
             cell = table.cell(0, ci)
             cell.text = headers[ci] if ci < len(headers) else ""
             for paragraph in cell.text_frame.paragraphs:
-                paragraph.font.size = Pt(14)
+                paragraph.font.size = THEME["sizes"]["table_header"]
                 paragraph.font.bold = True
-                paragraph.font.color.rgb = COLOR_LIGHT
-                paragraph.font.name = FONT_BODY
+                paragraph.font.color.rgb = THEME["colors"]["panel_text"]
+                paragraph.font.name = THEME["fonts"]["body"]
             cell.fill.solid()
-            cell.fill.fore_color.rgb = COLOR_TABLE_HEADER
+            cell.fill.fore_color.rgb = THEME["colors"]["table_header"]
 
-        # Data rows
         for ri, row in enumerate(rows):
             for ci in range(num_cols):
                 cell = table.cell(ri + 1, ci)
                 cell.text = row[ci] if ci < len(row) else ""
                 for paragraph in cell.text_frame.paragraphs:
-                    paragraph.font.size = Pt(13)
-                    paragraph.font.color.rgb = COLOR_PRIMARY
-                    paragraph.font.name = FONT_BODY
+                    paragraph.font.size = THEME["sizes"]["table_body"]
+                    paragraph.font.color.rgb = THEME["colors"]["body_text"]
+                    paragraph.font.name = THEME["fonts"]["body"]
                 if ri % 2 == 1:
                     cell.fill.solid()
-                    cell.fill.fore_color.rgb = COLOR_TABLE_ALT
+                    cell.fill.fore_color.rgb = THEME["colors"]["table_alt"]
 
         self._add_speaker_notes(slide, data.speaker_notes)
+
+    # ------------------------------------------------------------------
+    # Section header slide
+    # ------------------------------------------------------------------
 
     def _add_section_header_slide(self, prs: Presentation, data) -> None:
         slide = prs.slides.add_slide(prs.slide_layouts[6])
+        _fill_background(slide, prs)
+        m = MARGIN
+        content_w = prs.slide_width - 2 * m
 
-        # Accent bar
-        bar = slide.shapes.add_shape(
-            1, Inches(0), Inches(3.0), SLIDE_WIDTH, Inches(0.08),
+        panel_h = Inches(2.2)
+        panel_top = (int(SLIDE_HEIGHT) - int(panel_h)) // 2
+        panel = slide.shapes.add_shape(
+            MSO_SHAPE.RECTANGLE, 0, panel_top,
+            prs.slide_width, panel_h,
         )
-        bar.fill.solid()
-        bar.fill.fore_color.rgb = COLOR_ACCENT
-        bar.line.fill.background()
+        panel.fill.solid()
+        panel.fill.fore_color.rgb = THEME["colors"]["panel"]
+        panel.line.fill.background()
+        panel.shadow.inherit = False
 
-        title_box = slide.shapes.add_textbox(
-            MARGIN_LEFT, Inches(2.5), CONTENT_WIDTH, Inches(2.0),
-        )
+        text_top = panel_top + int(Inches(0.3))
+        text_h = int(panel_h) - int(Inches(0.6))
+        title_box = slide.shapes.add_textbox(m, text_top, content_w, text_h)
         tf = title_box.text_frame
         tf.word_wrap = True
+        tf.vertical_anchor = MSO_ANCHOR.MIDDLE
         p = tf.paragraphs[0]
-        p.text = data.title
-        p.font.size = Pt(36)
-        p.font.bold = True
-        p.font.color.rgb = COLOR_PRIMARY
-        p.font.name = FONT_TITLE
         p.alignment = PP_ALIGN.CENTER
+        r = p.add_run()
+        r.text = data.title
+        r.font.size = Pt(36)
+        r.font.bold = True
+        r.font.color.rgb = THEME["colors"]["panel_text"]
+        r.font.name = THEME["fonts"]["heading"]
 
         if data.body:
             p2 = tf.add_paragraph()
-            p2.text = data.body
-            p2.font.size = Pt(18)
-            p2.font.color.rgb = COLOR_MUTED
-            p2.font.name = FONT_BODY
             p2.alignment = PP_ALIGN.CENTER
+            p2.space_before = Pt(8)
+            r2 = p2.add_run()
+            r2.text = data.body
+            r2.font.size = THEME["sizes"]["subtitle"]
+            r2.font.color.rgb = THEME["colors"]["background"]
+            r2.font.name = THEME["fonts"]["body"]
 
         self._add_speaker_notes(slide, data.speaker_notes)
 
+    # ------------------------------------------------------------------
+    # Image placeholder slide
+    # ------------------------------------------------------------------
+
     def _add_image_placeholder_slide(self, prs: Presentation, data) -> None:
         slide = prs.slides.add_slide(prs.slide_layouts[6])
-        self._add_slide_title(slide, data.title)
+        _fill_background(slide, prs)
+        m = MARGIN
+        content_w = prs.slide_width - 2 * m
+        cursor = int(SPACING["slide_top"])
+        bottom = int(SLIDE_HEIGHT) - int(SPACING["slide_bottom"])
+
+        heading_font = THEME["sizes"]["content_heading"]
+        heading_h = _estimate_text_height(data.title, int(heading_font), int(content_w))
+        heading_h = max(heading_h, int(Inches(0.6)))
+        head_box = slide.shapes.add_textbox(m, cursor, content_w, heading_h)
+        tf = head_box.text_frame
+        tf.word_wrap = True
+        p = tf.paragraphs[0]
+        r = p.add_run()
+        r.text = data.title
+        r.font.size = heading_font
+        r.font.bold = True
+        r.font.name = THEME["fonts"]["heading"]
+        r.font.color.rgb = THEME["colors"]["heading_text"]
+        cursor += heading_h + int(SPACING["heading_gap"])
 
         if data.body:
-            body_box = slide.shapes.add_textbox(
-                MARGIN_LEFT, BODY_TOP, CONTENT_WIDTH, Inches(1.2),
-            )
+            body_font = THEME["sizes"]["body"]
+            body_h = _estimate_text_height(data.body, int(body_font), int(content_w))
+            body_h = max(body_h, int(Inches(0.4)))
+            body_box = slide.shapes.add_textbox(m, cursor, content_w, body_h)
             tf = body_box.text_frame
             tf.word_wrap = True
             p = tf.paragraphs[0]
-            p.text = data.body
-            self._style_body(p)
+            _add_runs_with_emphasis(
+                p, data.body,
+                font_color=THEME["colors"]["subtitle_text"],
+            )
+            cursor += body_h + int(SPACING["body_to_card_gap"])
+        else:
+            cursor += int(SPACING["element_gap"])
 
-        # Placeholder rectangle
-        ph_top = Inches(3.2) if data.body else BODY_TOP
-        ph_width = Inches(8.0)
-        ph_height = Inches(4.0)
-        ph_left = MARGIN_LEFT + (CONTENT_WIDTH - ph_width) / 2
+        ph_height = bottom - cursor
+        ph_width = min(int(Inches(8.0)), int(content_w))
+        ph_left = int(m) + (int(content_w) - ph_width) // 2
 
-        shape = slide.shapes.add_shape(1, ph_left, ph_top, ph_width, ph_height)
+        shape = slide.shapes.add_shape(
+            MSO_SHAPE.ROUNDED_RECTANGLE, ph_left, cursor, ph_width, ph_height,
+        )
+        shape.adjustments[0] = 0.05
         shape.fill.solid()
-        shape.fill.fore_color.rgb = COLOR_PLACEHOLDER_BG
-        shape.line.color.rgb = COLOR_BORDER
-        shape.line.dash_style = 4  # MSO_LINE_DASH_STYLE.DASH
+        shape.fill.fore_color.rgb = THEME["colors"]["card_fill"]
+        shape.line.color.rgb = THEME["colors"]["card_border"]
+        shape.line.dash_style = 4
 
         tf = shape.text_frame
         tf.word_wrap = True
+        tf.vertical_anchor = MSO_ANCHOR.MIDDLE
         p = tf.paragraphs[0]
-        p.text = "[Insert Image Here]"
-        p.font.size = Pt(18)
-        p.font.color.rgb = COLOR_MUTED
-        p.font.name = FONT_BODY
         p.alignment = PP_ALIGN.CENTER
-        tf.paragraphs[0].space_before = Pt(60)
+        r = p.add_run()
+        r.text = "[Insert Image Here]"
+        r.font.size = THEME["sizes"]["body"]
+        r.font.color.rgb = THEME["colors"]["footer_text"]
+        r.font.name = THEME["fonts"]["body"]
 
         self._add_speaker_notes(slide, data.speaker_notes)
 
@@ -303,56 +672,11 @@ class PPTXExporter:
     # ------------------------------------------------------------------
 
     @staticmethod
-    def _add_slide_title(slide, text: str) -> None:
-        title_box = slide.shapes.add_textbox(
-            MARGIN_LEFT, MARGIN_TOP, CONTENT_WIDTH, TITLE_HEIGHT,
-        )
-        tf = title_box.text_frame
-        tf.word_wrap = True
-        p = tf.paragraphs[0]
-        p.text = text
-        p.font.size = Pt(28)
-        p.font.bold = True
-        p.font.color.rgb = COLOR_PRIMARY
-        p.font.name = FONT_TITLE
-
-    @staticmethod
     def _add_speaker_notes(slide, notes_text: str) -> None:
         if not notes_text:
             return
         notes_slide = slide.notes_slide
         notes_slide.notes_text_frame.text = notes_text
-
-    @staticmethod
-    def _style_body(paragraph) -> None:
-        paragraph.font.size = Pt(16)
-        paragraph.font.color.rgb = COLOR_MUTED
-        paragraph.font.name = FONT_BODY
-
-    @staticmethod
-    def _fill_bullets(text_frame, items: list[str], body: str = "") -> None:
-        text_frame.word_wrap = True
-        first = True
-        if body:
-            p = text_frame.paragraphs[0]
-            p.text = body
-            p.font.size = Pt(16)
-            p.font.color.rgb = COLOR_MUTED
-            p.font.name = FONT_BODY
-            first = False
-
-        for item in items:
-            if first:
-                p = text_frame.paragraphs[0]
-                first = False
-            else:
-                p = text_frame.add_paragraph()
-            p.text = item
-            p.font.size = Pt(18)
-            p.font.color.rgb = COLOR_PRIMARY
-            p.font.name = FONT_BODY
-            p.level = 0
-            p.space_after = Pt(8)
 
     @staticmethod
     def _get_table_data(data) -> dict | None:
@@ -364,19 +688,3 @@ class PPTXExporter:
         if hasattr(td, "model_dump"):
             return td.model_dump()
         return None
-
-    @staticmethod
-    def _add_fallback_body(slide, data) -> None:
-        body_box = slide.shapes.add_textbox(
-            MARGIN_LEFT, BODY_TOP, CONTENT_WIDTH, BODY_HEIGHT,
-        )
-        tf = body_box.text_frame
-        tf.word_wrap = True
-        if data.body:
-            tf.paragraphs[0].text = data.body
-        for bp in (data.bullet_points or []):
-            p = tf.add_paragraph()
-            p.text = bp
-            p.font.size = Pt(18)
-            p.font.color.rgb = COLOR_PRIMARY
-            p.font.name = FONT_BODY

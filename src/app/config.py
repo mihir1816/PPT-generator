@@ -27,11 +27,12 @@ class Settings(BaseSettings):
     LLM_BASE_URL: str = "http://vllm:8000/v1"
     LLM_MODEL: str = "Qwen/Qwen3-30B-A3B-AWQ"
     LLM_MAX_TOKENS: int = 4096
+    LLM_MODEL_CONTEXT: int = 4096
     LLM_TEMPERATURE: float = 0.7
     LLM_TIMEOUT: int = 120
     LLM_JSON_RETRIES: int = 1
 
-    EMBEDDING_MODEL: str = "nomic-embed-text-v2-moe"
+    EMBEDDING_MODEL: str = "nomic-ai/nomic-embed-text-v1.5"
     EMBEDDING_DIMENSION: int = 768
 
     CHUNK_SIZE_CHILD: int = 512

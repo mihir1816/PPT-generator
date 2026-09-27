@@ -1,5 +1,6 @@
 import logging
 import re
+from collections.abc import AsyncGenerator
 
 from openai import AsyncOpenAI, APIConnectionError, APITimeoutError
 from pydantic import BaseModel, ValidationError
@@ -27,6 +28,8 @@ class LLMClient:
         settings = get_settings()
         self._timeout = timeout or settings.LLM_TIMEOUT
         self._json_retries = json_retries if json_retries is not None else settings.LLM_JSON_RETRIES
+        self._max_tokens = settings.LLM_MAX_TOKENS
+        self._model_context = settings.LLM_MODEL_CONTEXT
         self.model = model
         self.client = AsyncOpenAI(
             base_url=base_url,
@@ -34,14 +37,25 @@ class LLMClient:
             timeout=float(self._timeout),
         )
 
+    def _clamp_max_tokens(self, prompt_text: str, requested: int) -> int:
+        est_input = len(prompt_text) // 3 + 64
+        headroom = self._model_context - est_input
+        safe = max(256, min(requested, headroom))
+        return safe
+
     async def generate(
         self,
         system_prompt: str,
         user_prompt: str,
         temperature: float = 0.7,
-        max_tokens: int = 4096,
+        max_tokens: int | None = None,
         response_format: dict | None = None,
     ) -> str:
+        if max_tokens is None:
+            max_tokens = self._max_tokens
+        max_tokens = self._clamp_max_tokens(
+            system_prompt + user_prompt, max_tokens,
+        )
         try:
             kwargs: dict = {
                 "model": self.model,
@@ -71,7 +85,7 @@ class LLMClient:
         user_prompt: str,
         response_model: type[BaseModel],
         temperature: float = 0.7,
-        max_tokens: int = 4096,
+        max_tokens: int | None = None,
     ) -> BaseModel:
         last_error: Exception | None = None
         for attempt in range(1 + self._json_retries):
@@ -97,6 +111,81 @@ class LLMClient:
             f"Failed to parse LLM response as {response_model.__name__} "
             f"after {1 + self._json_retries} attempts: {last_error}"
         )
+
+    async def generate_stream(
+        self,
+        system_prompt: str,
+        user_prompt: str,
+        temperature: float = 0.7,
+        max_tokens: int | None = None,
+    ) -> AsyncGenerator[str, None]:
+        """Yield decoded tokens from the LLM, stripping <think>...</think> blocks."""
+        if max_tokens is None:
+            max_tokens = self._max_tokens
+        max_tokens = self._clamp_max_tokens(
+            system_prompt + user_prompt, max_tokens,
+        )
+        try:
+            stream = await self.client.chat.completions.create(
+                model=self.model,
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_prompt},
+                ],
+                temperature=temperature,
+                max_tokens=max_tokens,
+                stream=True,
+            )
+        except APIConnectionError as exc:
+            raise LLMServiceError(
+                f"Cannot connect to LLM at {self.client.base_url}: {exc}"
+            ) from exc
+        except APITimeoutError as exc:
+            raise LLMServiceError(
+                f"LLM request timed out after {self._timeout}s"
+            ) from exc
+        except Exception as exc:
+            raise LLMServiceError(f"LLM stream failed: {exc}") from exc
+
+        buffer = ""
+        in_think = False
+
+        async for chunk in stream:
+            token = chunk.choices[0].delta.content
+            if token is None:
+                continue
+
+            buffer += token
+
+            # Process buffer, yielding only non-think content
+            while buffer:
+                if in_think:
+                    end = buffer.find("</think>")
+                    if end == -1:
+                        # Still inside think block, consume entire buffer
+                        buffer = ""
+                        break
+                    else:
+                        # Found end of think block; skip up to and including </think>
+                        buffer = buffer[end + len("</think>"):]
+                        in_think = False
+                else:
+                    start = buffer.find("<think>")
+                    if start == -1:
+                        # No think block starting — yield everything
+                        yield buffer
+                        buffer = ""
+                        break
+                    else:
+                        # Yield content before the think block
+                        if start > 0:
+                            yield buffer[:start]
+                        buffer = buffer[start + len("<think>"):]
+                        in_think = True
+
+        # Yield any remaining non-think content
+        if buffer and not in_think:
+            yield buffer
 
     async def health_check(self) -> bool:
         try:

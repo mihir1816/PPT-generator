@@ -1,5 +1,6 @@
 import json
 import logging
+import re
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -20,6 +21,18 @@ from app.services.slide_outline import SlideOutlineService
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api", tags=["generate"])
+
+_BRACKET_RE = re.compile(r"\[\[(.+?)\]\]")
+
+
+def _strip_emphasis(text: str) -> str:
+    if not text:
+        return text
+    prev = None
+    while prev != text:
+        prev = text
+        text = _BRACKET_RE.sub(r"\1", text)
+    return text
 
 
 # ---------------------------------------------------------------------------
@@ -262,9 +275,19 @@ async def generate_slides(
                 async for event in slide_gen.generate_all_slides(
                     stream_deck, retrieval_data, prefs, stream_db,
                 ):
+                    data = event["data"]
+                    if event["event"] == "slide_content":
+                        data = dict(data)
+                        if "body" in data:
+                            data["body"] = _strip_emphasis(data.get("body", ""))
+                        if "bullet_points" in data:
+                            data["bullet_points"] = [
+                                _strip_emphasis(b)
+                                for b in data.get("bullet_points", [])
+                            ]
                     yield {
                         "event": event["event"],
-                        "data": json.dumps(event["data"]),
+                        "data": json.dumps(data),
                     }
             except Exception as exc:
                 logger.exception(
@@ -312,8 +335,8 @@ async def get_slides(
                 slide_id=s.slide_id,
                 position=s.position,
                 title=s.title,
-                body=s.body,
-                bullet_points=s.bullet_points or [],
+                body=_strip_emphasis(s.body),
+                bullet_points=[_strip_emphasis(b) for b in (s.bullet_points or [])],
                 table_data=s.table_data,
                 speaker_notes=s.speaker_notes,
                 layout_hint=s.layout_hint,
@@ -378,8 +401,8 @@ async def get_single_slide(
         slide_id=slide.slide_id,
         position=slide.position,
         title=slide.title,
-        body=slide.body,
-        bullet_points=slide.bullet_points or [],
+        body=_strip_emphasis(slide.body),
+        bullet_points=[_strip_emphasis(b) for b in (slide.bullet_points or [])],
         table_data=slide.table_data,
         speaker_notes=slide.speaker_notes,
         layout_hint=slide.layout_hint,

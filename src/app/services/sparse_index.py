@@ -28,10 +28,11 @@ class SparseIndexService:
         query: str,
         limit: int = 20,
     ) -> list[tuple[int, float]]:
-        if index.corpus_size == 0:
+        num_docs = index.scores.get("num_docs", 0) if isinstance(index.scores, dict) else 0
+        if num_docs == 0:
             return []
         tokenized_query = bm25s.tokenize(query, stopwords="en")
-        k = min(limit, index.corpus_size)
+        k = min(limit, num_docs)
         try:
             results, scores = index.retrieve(tokenized_query, k=k)
         except Exception:

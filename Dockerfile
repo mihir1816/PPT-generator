@@ -13,12 +13,27 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # install; a stub satisfies that without pulling in real source (which is
 # copied in afterward and overrides the stub via the editable path mapping).
 COPY pyproject.toml .
-RUN mkdir -p src/app && touch src/app/__init__.py \
-    && pip install --no-cache-dir -e ".[dev]"
+RUN --mount=type=cache,target=/root/.cache/pip \
+    mkdir -p src/app && touch src/app/__init__.py \
+    && pip install --timeout 300 --retries 5 -e .
 
 COPY . .
 
 ENV PYTHONPATH=/app/src
 ENV PYTHONUNBUFFERED=1
 
+COPY entrypoint.sh /entrypoint.sh
+RUN chmod +x /entrypoint.sh
+
+# Pre-download the embedding model during build so it is available immediately
+# at runtime without any network call. The cache dir matches the volume mount
+# in docker-compose.yml (tcg_fastembed_cache → /root/.cache/fastembed).
+RUN python - <<'EOF'
+from fastembed import TextEmbedding
+# Download and cache the model; this runs once at build time
+list(TextEmbedding("nomic-ai/nomic-embed-text-v1.5").embed(["warmup"]))
+print("Embedding model pre-downloaded OK")
+EOF
+
+ENTRYPOINT ["/entrypoint.sh"]
 CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]

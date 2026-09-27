@@ -6,7 +6,7 @@ logger = logging.getLogger(__name__)
 
 
 class EmbeddingService:
-    def __init__(self, model_name: str = "nomic-embed-text-v2-moe", dimension: int = 768):
+    def __init__(self, model_name: str = "nomic-ai/nomic-embed-text-v1.5", dimension: int = 768):
         self._model_name = model_name
         self._dimension = dimension
         logger.info("Loading embedding model: %s", model_name)
