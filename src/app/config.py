@@ -25,7 +25,9 @@ class Settings(BaseSettings):
     MINIO_BUCKET: str = "tcg-uploads"
 
     LLM_BASE_URL: str = "http://vllm:8000/v1"
-    LLM_MODEL: str = "Qwen/Qwen3-30B-A3B-AWQ"
+    LLM_MODEL: str = "Qwen/Qwen2.5-1.5B-Instruct-AWQ"
+    LLM_API_KEY: str = "not-needed"
+    LLM_FALLBACK_MODEL: str = ""
     LLM_MAX_TOKENS: int = 4096
     LLM_MODEL_CONTEXT: int = 4096
     LLM_TEMPERATURE: float = 0.7

@@ -59,7 +59,7 @@ async def export_deck(
         raise HTTPException(status_code=409, detail="No slides to export")
 
     prefs = TeacherPreferences.model_validate(deck.preferences_json)
-    deck_title = deck.teacher_query[:60] if deck.teacher_query else "Presentation"
+    deck_title = deck.title or "Presentation"
 
     try:
         pptx_bytes = exporter.export_deck(slides, preferences=prefs.model_dump(), title=deck_title)
@@ -110,7 +110,7 @@ async def download_deck(
         raise HTTPException(status_code=409, detail="No slides to export")
 
     prefs = TeacherPreferences.model_validate(deck.preferences_json)
-    deck_title = deck.teacher_query[:60] if deck.teacher_query else "Presentation"
+    deck_title = deck.title or "Presentation"
 
     try:
         pptx_bytes = exporter.export_deck(slides, preferences=prefs.model_dump(), title=deck_title)

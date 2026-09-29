@@ -72,10 +72,10 @@ class AnalyzerResponse(BaseModel):
 
 class SlideEditResponse(BaseModel):
     title: str = ""
-    body: str = ""
+    body: str | None = ""
     bullet_points: list[str] = Field(default_factory=list)
     table_data: dict | None = None
-    speaker_notes: str = ""
+    speaker_notes: str | None = ""
     layout_hint: str = "bullet"
 
 
@@ -437,7 +437,7 @@ class FeedbackService:
                 slide_row.speaker_notes = result.speaker_notes
         else:
             slide_row.title = result.title or slide_row.title
-            slide_row.body = self._fix_brackets(result.body)
+            slide_row.body = self._fix_brackets(result.body or "")
             clean_bps = self._clean_bullet_points(result.bullet_points)
             slide_row.bullet_points = [self._fix_brackets(b) for b in clean_bps]
             slide_row.speaker_notes = result.speaker_notes or slide_row.speaker_notes
@@ -484,7 +484,7 @@ class FeedbackService:
         # Update original slide with slide_a content
         a = result.slide_a
         slide_row.title = a.title or slide_row.title
-        slide_row.body = self._fix_brackets(a.body)
+        slide_row.body = self._fix_brackets(a.body or "")
         slide_row.bullet_points = [self._fix_brackets(b) for b in a.bullet_points]
         slide_row.speaker_notes = a.speaker_notes or slide_row.speaker_notes
         slide_row.layout_hint = a.layout_hint or slide_row.layout_hint
@@ -510,7 +510,7 @@ class FeedbackService:
             "slide_id": new_id,
             "position": 0,
             "title": b.title or "Continued",
-            "body": self._fix_brackets(b.body),
+            "body": self._fix_brackets(b.body or ""),
             "bullet_points": [self._fix_brackets(bp) for bp in b.bullet_points],
             "table_data": b.table_data,
             "speaker_notes": b.speaker_notes or "",
@@ -567,7 +567,7 @@ class FeedbackService:
 
         # Update slide_a with merged content
         row_a.title = result.title or row_a.title
-        row_a.body = self._fix_brackets(result.body)
+        row_a.body = self._fix_brackets(result.body or "")
         row_a.bullet_points = [self._fix_brackets(b) for b in result.bullet_points]
         row_a.table_data = result.table_data
         row_a.speaker_notes = result.speaker_notes or row_a.speaker_notes
@@ -645,7 +645,7 @@ class FeedbackService:
         new_slide = await crud.create_slide(db, deck.id, {
             "slide_id": new_id, "position": 0,
             "title": result.title or change.edit_instruction[:50],
-            "body": self._fix_brackets(result.body),
+            "body": self._fix_brackets(result.body or ""),
             "bullet_points": [self._fix_brackets(b) for b in result.bullet_points],
             "table_data": result.table_data,
             "speaker_notes": result.speaker_notes or "",

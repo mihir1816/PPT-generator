@@ -11,6 +11,7 @@ class Deck(Base, TimestampMixin):
     __tablename__ = "decks"
 
     id: Mapped[uuid.UUID] = uuid_pk()
+    title: Mapped[str] = mapped_column(String(200), nullable=False, default="Presentation")
     teacher_query: Mapped[str] = mapped_column(Text, nullable=False)
     preferences_json: Mapped[dict] = mapped_column(JSON, nullable=False)
     syllabus_json: Mapped[dict | None] = mapped_column(JSON, nullable=True)

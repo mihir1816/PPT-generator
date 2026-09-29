@@ -111,13 +111,19 @@ def parse_emphasis(raw_text: str) -> Tuple[str, List[Tuple[int, int]]]:
     for m in _EMPHASIS_RE.finditer(raw_text):
         clean_parts.append(raw_text[pos:m.start()])
         cursor += len(raw_text[pos:m.start()])
-        term = m.group(1)
-        spans.append((cursor, cursor + len(term)))
-        clean_parts.append(term)
-        cursor += len(term)
+        term = m.group(1).strip()
+        if term:
+            spans.append((cursor, cursor + len(term)))
+            clean_parts.append(term)
+            cursor += len(term)
         pos = m.end()
-    clean_parts.append(raw_text[pos:])
-    return "".join(clean_parts), spans
+    tail = raw_text[pos:]
+    clean_parts.append(tail)
+    result = "".join(clean_parts)
+    leftover = result.replace("[[", "").replace("]]", "")
+    if leftover != result:
+        return leftover, []
+    return result, spans
 
 
 def _add_run_highlight(run, hex_color: str) -> None:

@@ -162,10 +162,11 @@ async def get_chunks_by_documents(
 async def create_deck(
     db: AsyncSession,
     *,
+    title: str = "Presentation",
     teacher_query: str,
     preferences_json: dict,
 ) -> Deck:
-    deck = Deck(teacher_query=teacher_query, preferences_json=preferences_json)
+    deck = Deck(title=title, teacher_query=teacher_query, preferences_json=preferences_json)
     db.add(deck)
     await db.flush()
     return deck

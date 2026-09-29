@@ -21,6 +21,7 @@ export interface TeacherPreferences {
 }
 
 export interface CreateDeckRequest {
+  title: string;
   document_ids: string[];
   description: string;
   outline?: string | null;
@@ -43,6 +44,7 @@ export interface TopicSyllabus {
 
 export interface DeckResponse {
   deck_id: string;
+  title: string;
   status: string;
   syllabus: TopicSyllabus | null;
   syllabus_status: string;
@@ -53,6 +55,7 @@ export interface DeckResponse {
 
 export interface DeckListItem {
   deck_id: string;
+  title: string;
   status: string;
   syllabus_status: string;
   teacher_query: string;

@@ -21,7 +21,7 @@ Output a JSON object with this structure:
 {{
   "title": "string",
   "topics": [
-    {{
+    {{  
       "title": "string",
       "subtopics": ["string", ...],
       "depth_hint": "brief" | "detailed" | null,
@@ -34,7 +34,7 @@ Output a JSON object with this structure:
 
 Rules:
 - If an outline is provided, strictly follow it. Do not deviate.
-- Calibrate topic depth to fit approximately {slide_count_hint} slides if specified.
+- The presentation MUST produce exactly {slide_count_hint} slides (including title and closing). Calibrate topic depth and count to hit this number precisely.
 - Every topic must have at least one subtopic.
 """
 
@@ -126,10 +126,10 @@ Output a JSON object:
 }}
 
 Rules:
+- You MUST generate EXACTLY {slide_count_hint} slides total — no more, no less. This is a strict requirement, not a suggestion. Count your slides carefully before outputting.
 - First slide should be type "title", last should be "closing" or "summary".
 - Handle tables that might span multiple slides using spans_slides and table_continuation.
 - Include layout hints appropriate for the content.
-- Aim for approximately {slide_count_hint} slides if specified.
 - Each slide id should be "slide_1", "slide_2", etc.
 """
 
@@ -164,8 +164,10 @@ Rules for marking:
 relationships being taught — not generic verbs or connectors.
 - Mark the shortest span that is still a complete, sensible unit.
 - Never mark a whole sentence or more than ~40% of a line's words.
-- Do not use any other markup (no markdown **, no HTML). [[ ]] is the only \
-emphasis syntax the renderer understands.
+- Use EXACTLY two opening brackets and two closing brackets: [[term]]. \
+Never use single brackets [term], triple [[[term]]], or nested [[[[term]]]].
+- Do not use any other markup (no markdown **, no HTML, no *italic*). \
+[[ ]] is the only emphasis syntax the renderer understands.
 
 ## Output format
 Return ONLY a single JSON object, no prose before or after.
@@ -199,8 +201,8 @@ Output a JSON object:
 
 Rules:
 - Bullet points should be concise (max 2 lines each), 3-4 bullets per slide.
-- Use [[term]] markup in body and bullet_points for key terms students should remember.
-- Speaker notes should add context not shown on the slide (no markup).
+- Use [[term]] markup (exactly two brackets each side) in body and bullet_points for 2-5 key terms per slide. Never use single brackets, triple brackets, or nested brackets.
+- Speaker notes should add context not shown on the slide (no [[ ]] markup).
 """
 
 # ---------------------------------------------------------------------------
@@ -253,7 +255,9 @@ Rules:
 - target must be the exact slide id from the manifest (e.g. "slide_2", not "2").
 - If user references a slide by topic name, match it to the closest slide title.
 - For global feedback ("make all shorter"), emit one change per content slide.
-- Do not touch title or closing slides unless explicitly asked."""
+- Do not touch title or closing slides unless explicitly asked.
+- History of previous round is only for context about previous changes , current changes has to be made based on what is in feedback_text,so treat it as prompt and history_section as helping context
+"""
 
 # ---------------------------------------------------------------------------
 # Stage 9 — Slide Editor (edits existing slide content precisely)
@@ -283,8 +287,8 @@ Output the complete updated slide as JSON:
 Rules:
 - Apply ONLY the requested edit. Preserve unchanged content exactly.
 - Keep bullet_points concise (max 2 lines each), max 5-6 per slide.
-- Use [[term]] markup on key terms in body and bullet_points.
-- Speaker notes: add presenter context, no [[]] markup."""
+- Use [[term]] markup (exactly two brackets each side) on key terms in body and bullet_points. Never use single, triple, or nested brackets.
+- Speaker notes: add presenter context, no [[ ]] markup."""
 
 # ---------------------------------------------------------------------------
 # Stage 9B — Slide Splitter (splits one slide into two)

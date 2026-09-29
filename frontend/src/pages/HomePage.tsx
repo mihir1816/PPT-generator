@@ -34,6 +34,7 @@ export default function HomePage() {
     tone: "formal",
     content_mode: "grounded",
   });
+  const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -124,7 +125,7 @@ export default function HomePage() {
     .map((u) => u.documentId!);
 
   const canSubmit =
-    completedDocIds.length > 0 && description.trim().length > 0 && !submitting;
+    completedDocIds.length > 0 && title.trim().length > 0 && description.trim().length > 0 && !submitting;
 
   const handleSubmit = async () => {
     if (!canSubmit) return;
@@ -132,6 +133,7 @@ export default function HomePage() {
     setError(null);
     try {
       const deck = await api.createDeck({
+        title: title.trim(),
         document_ids: completedDocIds,
         description: description.trim(),
         outline: null,
@@ -308,6 +310,22 @@ export default function HomePage() {
               value={preferences.audience_level}
               onChange={(v) => setPreferences((p) => ({ ...p, audience_level: v as "beginner" | "intermediate" | "advanced" }))}
               disabled={submitting}
+            />
+          </div>
+
+          {/* Presentation Title */}
+          <div>
+            <h2 className="font-heading font-bold text-[13.5px] text-ink mb-2.5">
+              Presentation Title <span className="text-warn">*</span>
+            </h2>
+            <input
+              type="text"
+              value={title}
+              onChange={(e) => setTitle(e.target.value)}
+              placeholder="e.g. Introduction to Machine Learning"
+              disabled={submitting}
+              maxLength={200}
+              className="w-full border border-line rounded-2xl px-3.5 py-2.5 text-[13px] text-ink placeholder:text-ink3 bg-surface2 outline-none disabled:opacity-50"
             />
           </div>
 

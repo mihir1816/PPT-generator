@@ -2,7 +2,7 @@ import logging
 import re
 from collections.abc import AsyncGenerator
 
-from openai import AsyncOpenAI, APIConnectionError, APITimeoutError
+from openai import AsyncOpenAI, APIConnectionError, APITimeoutError, RateLimitError
 from pydantic import BaseModel, ValidationError
 
 from app.config import get_settings
@@ -31,11 +31,18 @@ class LLMClient:
         self._max_tokens = settings.LLM_MAX_TOKENS
         self._model_context = settings.LLM_MODEL_CONTEXT
         self.model = model
+        self._fallback_model = settings.LLM_FALLBACK_MODEL or ""
         self.client = AsyncOpenAI(
             base_url=base_url,
-            api_key="not-needed",
+            api_key=settings.LLM_API_KEY,
             timeout=float(self._timeout),
         )
+
+    def _model_chain(self) -> list[str]:
+        models = [self.model]
+        if self._fallback_model:
+            models.append(self._fallback_model)
+        return models
 
     def _clamp_max_tokens(self, prompt_text: str, requested: int) -> int:
         est_input = int(len(prompt_text) / 2.5) + 100
@@ -62,28 +69,37 @@ class LLMClient:
         max_tokens = self._clamp_max_tokens(
             system_prompt + user_prompt, max_tokens,
         )
-        try:
-            kwargs: dict = {
-                "model": self.model,
-                "messages": [
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": user_prompt},
-                ],
-                "temperature": temperature,
-                "max_tokens": max_tokens,
-            }
-            if response_format is not None:
-                kwargs["response_format"] = response_format
+        for model in self._model_chain():
+            try:
+                kwargs: dict = {
+                    "model": model,
+                    "messages": [
+                        {"role": "system", "content": system_prompt},
+                        {"role": "user", "content": user_prompt},
+                    ],
+                    "temperature": temperature,
+                    "max_tokens": max_tokens,
+                }
+                if response_format is not None:
+                    kwargs["response_format"] = response_format
 
-            response = await self.client.chat.completions.create(**kwargs)
-            content = response.choices[0].message.content or ""
-            return self.strip_think_blocks(content)
-        except APIConnectionError as exc:
-            raise LLMServiceError(f"Cannot connect to LLM at {self.client.base_url}: {exc}") from exc
-        except APITimeoutError as exc:
-            raise LLMServiceError(f"LLM request timed out after {self._timeout}s") from exc
-        except Exception as exc:
-            raise LLMServiceError(f"LLM generation failed: {exc}") from exc
+                response = await self.client.chat.completions.create(**kwargs)
+                content = response.choices[0].message.content or ""
+                return self.strip_think_blocks(content)
+            except RateLimitError as exc:
+                if model != self.model:
+                    raise LLMServiceError(f"Rate limited on fallback model too: {exc}") from exc
+                if not self._fallback_model:
+                    raise LLMServiceError(f"Rate limited and no fallback model configured: {exc}") from exc
+                logger.warning("Rate limited on %s, falling back to %s", model, self._fallback_model)
+                continue
+            except APIConnectionError as exc:
+                raise LLMServiceError(f"Cannot connect to LLM at {self.client.base_url}: {exc}") from exc
+            except APITimeoutError as exc:
+                raise LLMServiceError(f"LLM request timed out after {self._timeout}s") from exc
+            except Exception as exc:
+                raise LLMServiceError(f"LLM generation failed: {exc}") from exc
+        raise LLMServiceError("All models exhausted")
 
     async def generate_json(
         self,

@@ -28,6 +28,7 @@ router = APIRouter(prefix="/api", tags=["syllabus"])
 
 
 class CreateDeckRequest(BaseModel):
+    title: str = Field(min_length=1, max_length=200)
     document_ids: list[UUID] = Field(min_length=1)
     description: str = Field(min_length=1, max_length=5000)
     outline: str | None = None
@@ -36,6 +37,7 @@ class CreateDeckRequest(BaseModel):
 
 class DeckResponse(BaseModel):
     deck_id: UUID
+    title: str = "Presentation"
     status: str
     syllabus: TopicSyllabus | None = None
     syllabus_status: str = "pending"
@@ -72,6 +74,7 @@ async def create_deck(
 
     deck = await crud.create_deck(
         db,
+        title=body.title,
         teacher_query=body.description,
         preferences_json=body.preferences.model_dump(mode="json"),
     )
@@ -97,6 +100,7 @@ async def create_deck(
 
     return DeckResponse(
         deck_id=deck.id,
+        title=deck.title,
         status=deck.status,
         syllabus=syllabus,
         syllabus_status=deck.syllabus_status,
@@ -127,6 +131,7 @@ async def get_deck(
 
     return DeckResponse(
         deck_id=deck.id,
+        title=deck.title,
         status=deck.status,
         syllabus=syllabus,
         syllabus_status=deck.syllabus_status,
@@ -193,6 +198,7 @@ async def syllabus_feedback(
 
     return DeckResponse(
         deck_id=deck.id,
+        title=deck.title,
         status=deck.status,
         syllabus=updated_syllabus,
         syllabus_status=deck.syllabus_status,
@@ -248,6 +254,7 @@ async def syllabus_approve(
 
     return DeckResponse(
         deck_id=deck.id,
+        title=deck.title,
         status=status,
         syllabus=syllabus,
         syllabus_status=deck.syllabus_status,
@@ -264,6 +271,7 @@ async def syllabus_approve(
 
 class DeckListItem(BaseModel):
     deck_id: UUID
+    title: str = "Presentation"
     status: str
     syllabus_status: str
     teacher_query: str
@@ -288,6 +296,7 @@ async def list_decks(
         items.append(
             DeckListItem(
                 deck_id=d.id,
+                title=d.title,
                 status=d.status,
                 syllabus_status=d.syllabus_status,
                 teacher_query=d.teacher_query[:200],

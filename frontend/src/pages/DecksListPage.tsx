@@ -61,9 +61,10 @@ export default function DecksListPage() {
       .finally(() => setLoading(false));
   }, []);
 
-  const filtered = decks.filter((d) =>
-    d.teacher_query.toLowerCase().includes(search.toLowerCase()),
-  );
+  const filtered = decks.filter((d) => {
+    const q = search.toLowerCase();
+    return d.title.toLowerCase().includes(q) || d.teacher_query.toLowerCase().includes(q);
+  });
 
   if (loading) {
     return (
@@ -131,7 +132,7 @@ export default function DecksListPage() {
               </div>
               <div className="p-4">
                 <div className="font-heading font-bold text-[14.5px] text-ink leading-snug mb-2 line-clamp-2">
-                  {d.teacher_query}
+                  {d.title}
                 </div>
                 <div className="flex items-center justify-between">
                   <Badge tone={statusTone(d.status)}>{statusLabel(d.status)}</Badge>

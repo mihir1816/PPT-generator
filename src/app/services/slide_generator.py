@@ -26,10 +26,10 @@ logger = logging.getLogger(__name__)
 class SlideContentResponse(BaseModel):
     slide_id: str = ""
     title: str = ""
-    body: str = ""
+    body: str | None = ""
     bullet_points: list[str] = Field(default_factory=list)
     table_data: dict | None = None
-    speaker_notes: str = ""
+    speaker_notes: str | None = ""
     layout_hint: str = "bullet"
 
 
