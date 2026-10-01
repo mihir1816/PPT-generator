@@ -17,10 +17,16 @@ class EmbeddingService:
     def dimension(self) -> int:
         return self._dimension
 
-    def embed_documents(self, texts: list[str]) -> list[list[float]]:
+    def embed_documents(self, texts: list[str], batch_size: int = 8) -> list[list[float]]:
         if not texts:
             return []
-        return [embedding.tolist() for embedding in self._model.embed(texts)]
+        all_embeddings: list[list[float]] = []
+        for i in range(0, len(texts), batch_size):
+            batch = texts[i : i + batch_size]
+            all_embeddings.extend(
+                embedding.tolist() for embedding in self._model.embed(batch)
+            )
+        return all_embeddings
 
     def embed_query(self, query: str) -> list[float]:
         embeddings = list(self._model.query_embed(query))

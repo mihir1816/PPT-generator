@@ -126,7 +126,7 @@ Output a JSON object:
 }}
 
 Rules:
-- You MUST generate EXACTLY {slide_count_hint} slides total — no more, no less. This is a strict requirement, not a suggestion. Count your slides carefully before outputting.
+- YOU MUST GENERATE EXACTLY {slide_count_hint} SLIDES TOTAL — NO MORE NO LESS. This is a strict requirement, not a suggestion. Count your slides carefully before outputting.
 - First slide should be type "title", last should be "closing" or "summary".
 - Handle tables that might span multiple slides using spans_slides and table_continuation.
 - Include layout hints appropriate for the content.
@@ -200,7 +200,8 @@ Output a JSON object:
 }}
 
 Rules:
-- Bullet points should be concise (max 2 lines each), 3-4 bullets per slide.
+- Keep bullet points concise and focused, but adjust their length according to the importance and complexity of the concept. Use 2-3 lines for simple or precise concepts and allow 5-6 lines when additional explanation is necessary for student understanding. Prioritize clarity and sufficient conceptual coverage over strict length limits. Typically use 5-6 meaningful bullets per slide, but allow fewer or more when the topic requires it. Since the faculty will provide further explanation, include the essential information students need to understand and revise the concept without overcrowding the slides.
+
 - Use [[term]] markup (exactly two brackets each side) in body and bullet_points for 2-5 key terms per slide. Never use single brackets, triple brackets, or nested brackets.
 - Speaker notes should add context not shown on the slide (no [[ ]] markup).
 """
