@@ -314,6 +314,22 @@ class PPTXExporter:
             r.font.size = THEME["sizes"]["subtitle"]
             r.font.name = THEME["fonts"]["body"]
             r.font.color.rgb = THEME["colors"]["subtitle_text"]
+            cursor += sub_h + gap
+
+        bullets = getattr(data, "bullet_points", None) or []
+        if bullets:
+            bp_box = slide.shapes.add_textbox(m, cursor, content_w, Inches(2))
+            bp_tf = bp_box.text_frame
+            bp_tf.word_wrap = True
+            for i, bp in enumerate(bullets):
+                p_bp = bp_tf.paragraphs[0] if i == 0 else bp_tf.add_paragraph()
+                p_bp.space_before = Pt(6)
+                _add_runs_with_emphasis(
+                    p_bp, bp,
+                    font_size=THEME["sizes"]["body"],
+                    font_color=THEME["colors"]["body_text"],
+                    font_name=THEME["fonts"]["body"],
+                )
 
         self._add_speaker_notes(slide, data.speaker_notes)
 
@@ -565,9 +581,17 @@ class PPTXExporter:
         _fill_background(slide, prs)
         m = MARGIN
         content_w = prs.slide_width - 2 * m
+        bullets = getattr(data, "bullet_points", None) or []
 
-        panel_h = Inches(2.2)
-        panel_top = (int(SLIDE_HEIGHT) - int(panel_h)) // 2
+        title_block_h = Inches(1.2)
+        bullet_block_h = Inches(0.4) * len(bullets) if bullets else 0
+        gap = Inches(0.4) if bullets else 0
+        total_h = int(title_block_h) + int(gap) + int(bullet_block_h)
+        group_top = (int(SLIDE_HEIGHT) - total_h) // 2
+
+        panel_pad = Inches(0.3)
+        panel_h = int(title_block_h) + 2 * int(panel_pad)
+        panel_top = group_top - int(panel_pad)
         panel = slide.shapes.add_shape(
             MSO_SHAPE.RECTANGLE, 0, panel_top,
             prs.slide_width, panel_h,
@@ -577,9 +601,7 @@ class PPTXExporter:
         panel.line.fill.background()
         panel.shadow.inherit = False
 
-        text_top = panel_top + int(Inches(0.3))
-        text_h = int(panel_h) - int(Inches(0.6))
-        title_box = slide.shapes.add_textbox(m, text_top, content_w, text_h)
+        title_box = slide.shapes.add_textbox(m, group_top, content_w, int(title_block_h))
         tf = title_box.text_frame
         tf.word_wrap = True
         tf.vertical_anchor = MSO_ANCHOR.MIDDLE
@@ -601,6 +623,22 @@ class PPTXExporter:
             r2.font.size = THEME["sizes"]["subtitle"]
             r2.font.color.rgb = THEME["colors"]["background"]
             r2.font.name = THEME["fonts"]["body"]
+
+        if bullets:
+            bp_top = group_top + int(title_block_h) + int(gap)
+            bp_box = slide.shapes.add_textbox(m, bp_top, content_w, int(bullet_block_h))
+            bp_tf = bp_box.text_frame
+            bp_tf.word_wrap = True
+            for i, bp in enumerate(bullets):
+                p_bp = bp_tf.paragraphs[0] if i == 0 else bp_tf.add_paragraph()
+                p_bp.alignment = PP_ALIGN.CENTER
+                p_bp.space_before = Pt(6)
+                _add_runs_with_emphasis(
+                    p_bp, bp,
+                    font_size=THEME["sizes"]["body"],
+                    font_color=THEME["colors"]["body_text"],
+                    font_name=THEME["fonts"]["body"],
+                )
 
         self._add_speaker_notes(slide, data.speaker_notes)
 

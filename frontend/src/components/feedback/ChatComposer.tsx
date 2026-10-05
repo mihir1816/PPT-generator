@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect, type FormEvent, type KeyboardEvent } from "react";
-import { Send } from "lucide-react";
+import { Send, Loader2 } from "lucide-react";
 
 export function ChatComposer({
   placeholder,
@@ -56,7 +56,11 @@ export function ChatComposer({
         disabled={!value.trim() || disabled}
         className="w-8 h-8 rounded-full bg-accent disabled:opacity-40 flex items-center justify-center flex-shrink-0 mb-0.5"
       >
-        <Send size={15} className="text-white" aria-hidden />
+        {disabled ? (
+          <Loader2 size={15} className="text-white animate-spin" aria-hidden />
+        ) : (
+          <Send size={15} className="text-white" aria-hidden />
+        )}
       </button>
     </form>
   );

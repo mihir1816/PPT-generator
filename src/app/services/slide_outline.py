@@ -12,7 +12,11 @@ from app.schemas.deck import (
 )
 from app.schemas.syllabus import TopicSyllabus
 from app.services.llm_client import LLMClient, LLMServiceError
-from app.services.prompt_templates import SLIDE_OUTLINE_SYSTEM, SLIDE_OUTLINE_USER
+from app.services.prompt_templates import (
+    SLIDE_OUTLINE_RETRY_USER,
+    SLIDE_OUTLINE_SYSTEM,
+    SLIDE_OUTLINE_USER,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -59,24 +63,68 @@ class SlideOutlineService:
             )
             chunks_summary = chunks_summary[:max_summary_chars] + "\n[... truncated]"
 
-        slide_count_hint = str(preferences.slide_count_hint) if preferences.slide_count_hint else "10-15"
+        hint = preferences.slide_count_hint or syllabus.estimated_slides
+        slide_count_hint = str(hint) if hint else "10-15"
+
+        user_prompt = SLIDE_OUTLINE_USER.format(
+            syllabus_json=syllabus_json,
+            chunks_summary=chunks_summary,
+            level=preferences.audience_level,
+            tone=preferences.tone,
+            content_mode=preferences.content_mode,
+            slide_count_hint=slide_count_hint,
+        )
 
         try:
             result = await self._llm.generate_json(
                 SLIDE_OUTLINE_SYSTEM,
-                SLIDE_OUTLINE_USER.format(
-                    syllabus_json=syllabus_json,
-                    chunks_summary=chunks_summary,
-                    level=preferences.audience_level,
-                    tone=preferences.tone,
-                    content_mode=preferences.content_mode,
-                    slide_count_hint=slide_count_hint,
-                ),
+                user_prompt,
                 response_model=OutlineGenerationResponse,
             )
         except LLMServiceError:
             logger.exception("LLM outline generation failed")
             raise
+
+        target = int(slide_count_hint) if slide_count_hint.isdigit() else 0
+        logger.info(
+            "Outline initial result: %d slides, target=%d, hint=%r",
+            len(result.slides), target, slide_count_hint,
+        )
+        if target > 0 and len(result.slides) != target:
+            for attempt in range(2):
+                actual = len(result.slides)
+                logger.info(
+                    "Outline retry %d: got %d slides, target %d",
+                    attempt + 1, actual, target,
+                )
+                if actual < target:
+                    action = (
+                        f"You need to ADD {target - actual} more slides. "
+                        "Split the largest topics into multiple slides with distinct titles."
+                    )
+                else:
+                    action = (
+                        f"You need to REMOVE {actual - target} slides. "
+                        "Merge the smallest or most similar slides."
+                    )
+                retry_prompt = SLIDE_OUTLINE_RETRY_USER.format(
+                    actual_count=actual,
+                    target_count=target,
+                    action_instruction=action,
+                    previous_outline=result.model_dump_json(indent=2),
+                )
+                try:
+                    result = await self._llm.generate_json(
+                        SLIDE_OUTLINE_SYSTEM,
+                        retry_prompt,
+                        response_model=OutlineGenerationResponse,
+                    )
+                except LLMServiceError:
+                    logger.warning("Outline retry %d failed, using previous result", attempt + 1)
+                    break
+                if len(result.slides) == target:
+                    logger.info("Outline retry %d succeeded: %d slides", attempt + 1, target)
+                    break
 
         all_chunk_ids = self._collect_chunk_ids(topic_chunks)
 

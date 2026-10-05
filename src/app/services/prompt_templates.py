@@ -117,7 +117,6 @@ Output a JSON object:
       "title": "Slide Title",
       "key_points": ["point1", "point2"],
       "layout_hint": "title" | "bullet" | "two_column" | "table" | "section_header" | "image_placeholder",
-      "source_chunk_ids": ["chunk_id_1"],
       "spans_slides": false,
       "table_continuation": false,
       "status": "pending"
@@ -126,11 +125,25 @@ Output a JSON object:
 }}
 
 Rules:
-- YOU MUST GENERATE EXACTLY {slide_count_hint} SLIDES TOTAL — NO MORE NO LESS. This is a strict requirement, not a suggestion. Count your slides carefully before outputting.
+- YOU MUST GENERATE EXACTLY {slide_count_hint} SLIDES TOTAL — NO MORE, NO LESS. Count your output slides before responding.
+- The syllabus may have fewer topics than {slide_count_hint}. You MUST split larger topics across multiple slides so the total reaches exactly {slide_count_hint}. Give each split slide a distinct, descriptive title (not "Part 1"/"Part 2").
+- Topics with 3+ subtopics should be spread across 2-3 slides. Topics with 1-2 subtopics get 1 slide.
 - First slide should be type "title", last should be "closing" or "summary".
 - Handle tables that might span multiple slides using spans_slides and table_continuation.
 - Include layout hints appropriate for the content.
 - Each slide id should be "slide_1", "slide_2", etc.
+- FINAL CHECK: Count all slides in your output. If the count is not exactly {slide_count_hint}, add or merge slides until it is.
+"""
+
+SLIDE_OUTLINE_RETRY_USER = """\
+Your previous outline had {actual_count} slides, but the target is EXACTLY {target_count}.
+
+{action_instruction}
+
+Previous outline:
+{previous_outline}
+
+Output the corrected JSON with EXACTLY {target_count} slides. Same JSON schema as before. Renumber slide ids sequentially (slide_1, slide_2, ...).
 """
 
 # ---------------------------------------------------------------------------

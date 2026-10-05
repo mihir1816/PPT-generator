@@ -311,6 +311,22 @@ export default function HomePage() {
               onChange={(v) => setPreferences((p) => ({ ...p, audience_level: v as "beginner" | "intermediate" | "advanced" }))}
               disabled={submitting}
             />
+            <div>
+              <div className="text-[12.5px] font-bold text-ink2 font-body mb-2">Slides</div>
+              <input
+                type="number"
+                min={5}
+                max={50}
+                placeholder="Auto"
+                value={preferences.slide_count_hint ?? ""}
+                onChange={(e) => setPreferences((p) => ({
+                  ...p,
+                  slide_count_hint: e.target.value ? Number(e.target.value) : null,
+                }))}
+                disabled={submitting}
+                className="w-20 px-4 py-2 rounded-pill text-[13px] font-bold font-body border border-line bg-surface text-ink text-center outline-none focus:ring-2 focus:ring-accent/40 disabled:opacity-50"
+              />
+            </div>
           </div>
 
           {/* Presentation Title */}

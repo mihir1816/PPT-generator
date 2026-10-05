@@ -137,7 +137,7 @@ export default function DecksListPage() {
                 <div className="flex items-center justify-between">
                   <Badge tone={statusTone(d.status)}>{statusLabel(d.status)}</Badge>
                   {d.slide_count > 0 && (
-                    <span className="text-xs text-ink3">{d.slide_count} slides</span>
+                    <span className="text-xs text-ink3">{d.slide_count} slide{d.slide_count !== 1 ? "s" : ""}</span>
                   )}
                 </div>
               </div>

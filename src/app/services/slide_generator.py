@@ -259,10 +259,8 @@ class SlideGenerator:
                 rows=result.table_data.get("rows", []),
             )
         elif is_table_slide:
-            table_data = TableData(
-                headers=["Column 1", "Column 2"],
-                rows=[["Data pending", ""]],
-            )
+            layout = LayoutHint.BULLET
+            table_data = None
 
         title = result.title or outline.title
         body = result.body or ""

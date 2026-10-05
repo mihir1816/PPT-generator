@@ -28,11 +28,11 @@ class Settings(BaseSettings):
     LLM_MODEL: str = "Qwen/Qwen2.5-1.5B-Instruct-AWQ"
     LLM_API_KEY: str = "not-needed"
     LLM_FALLBACK_MODEL: str = ""
-    LLM_MAX_TOKENS: int = 4096
-    LLM_MODEL_CONTEXT: int = 4096
+    LLM_MAX_TOKENS: int = 8192
+    LLM_MODEL_CONTEXT: int = 1048576
     LLM_TEMPERATURE: float = 0.7
     LLM_TIMEOUT: int = 120
-    LLM_JSON_RETRIES: int = 1
+    LLM_JSON_RETRIES: int = 3
 
     EMBEDDING_MODEL: str = "nomic-ai/nomic-embed-text-v1.5"
     EMBEDDING_DIMENSION: int = 768

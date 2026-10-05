@@ -86,6 +86,7 @@ export default function GenerationPage() {
           setPhase("done");
           setGeneratingSlideId(null);
           fetchDeck();
+          fetchSlides();
           break;
         case "generation_error":
           setError(data.error as string || "Generation error");
@@ -96,7 +97,7 @@ export default function GenerationPage() {
           break;
       }
     },
-    [setSlides, setError, fetchDeck],
+    [setSlides, setError, fetchDeck, fetchSlides],
   );
 
   const runPipeline = useCallback(async () => {
@@ -182,7 +183,10 @@ export default function GenerationPage() {
           handleSSEEvent(evt);
           if (evt.event === "generation_complete") {
             setFeedbackLoading(false);
+            setPhase("done");
             setFeedbackRoundCount((c) => c + 1);
+            fetchSlides();
+            fetchDeck();
             setMessages((m) => [...m, { from: "system", text: "Slides updated successfully." }]);
           }
           if (evt.event === "generation_error" || evt.event === "error") {
@@ -241,7 +245,7 @@ export default function GenerationPage() {
   };
 
   const isDone = phase === "done" || deck?.status === "completed";
-  const isProcessing = phase !== "done" && phase !== "idle" && phase !== "error";
+  const isProcessing = phase !== "done" && phase !== "idle" && phase !== "error" && !feedbackLoading;
 
   const sortedSlides = [...slides].sort((a, b) => a.position - b.position);
   const currentSlide = sortedSlides[activeSlide];
@@ -392,11 +396,23 @@ export default function GenerationPage() {
         </div>
       )}
 
+      {/* Deck title */}
+      <div className="mb-4">
+        <h1 className="font-heading font-bold text-[22px] text-ink leading-snug">
+          {deck?.syllabus?.title || deck?.title || "Presentation"}
+        </h1>
+        <p className="text-[13px] text-ink3 mt-0.5">
+          {sortedSlides.length} slide{sortedSlides.length !== 1 ? "s" : ""}
+          {feedbackRoundCount > 0 ? ` · ${feedbackRoundCount} revision${feedbackRoundCount !== 1 ? "s" : ""}` : ""}
+        </p>
+      </div>
+
       {/* Slide thumbnail strip */}
       {sortedSlides.length > 0 && (
         <div className="flex gap-2.5 overflow-x-auto pb-4 mb-1.5">
           {sortedSlides.map((slide, i) => {
             const isActive = i === activeSlide;
+            const previewBp = slide.bullet_points?.[0] || "";
             return (
               <button
                 key={slide.slide_id}
@@ -405,15 +421,20 @@ export default function GenerationPage() {
                   isActive ? "border-accent bg-accent-bg" : "border-line bg-surface2"
                 }`}
               >
-                <div className="h-[70px] bg-[#FAF3E7] flex items-center justify-center text-[#A79680] text-[10px]">
-                  Slide {i + 1}
+                <div className="h-[70px] bg-surface border-b border-line px-2 py-1.5 overflow-hidden">
+                  <div className="text-[9px] font-bold text-ink truncate">{slide.title}</div>
+                  {previewBp && (
+                    <div className="text-[8px] text-ink3 mt-0.5 line-clamp-3 leading-[1.3]">
+                      {previewBp}
+                    </div>
+                  )}
                 </div>
                 <div
                   className={`px-2 py-1.5 text-[10.5px] truncate ${
                     isActive ? "text-ink font-bold" : "text-ink2 font-semibold"
                   }`}
                 >
-                  {slide.title}
+                  Slide {i + 1}
                 </div>
               </button>
             );
