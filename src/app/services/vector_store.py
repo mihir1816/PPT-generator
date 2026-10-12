@@ -18,7 +18,6 @@ logger = logging.getLogger(__name__)
 
 UPSERT_BATCH_SIZE = 100
 
-
 class VectorStoreService:
     def __init__(
         self,

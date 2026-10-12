@@ -60,6 +60,7 @@ services:
       retries: 10
 
   vllm:
+    profiles: [gpu]
     image: vllm/vllm-openai:latest
     ports:
       - "8100:8000"
