@@ -165,6 +165,9 @@ slides of content, and do not contradict the source chunks.
 ## Outline is binding
 Treat the outline entry's wording and scope as the required content of this \
 slide. Chunks are your evidence, not a replacement.
+The "key_points" field lists what concepts to TEACH — they are instructions \
+for you, not text to paste as bullets. Write the actual technical explanation \
+for each concept; never copy the key_point wording verbatim into the slide.
 
 ## Marking important terms
 Wrap each key term or short phrase the student should recall with double \
@@ -214,6 +217,8 @@ Output a JSON object:
 
 Rules:
 - Keep bullet points concise and focused, but adjust their length according to the importance and complexity of the concept. Use 2-3 lines for simple or precise concepts and allow 5-6 lines when additional explanation is necessary for student understanding. Prioritize clarity and sufficient conceptual coverage over strict length limits. Typically use 5-6 meaningful bullets per slide, but allow fewer or more when the topic requires it. Since the faculty will provide further explanation, include the essential information students need to understand and revise the concept without overcrowding the slides.
+
+- For technical content, illustrate concepts with concrete examples, syntax, or commands where they naturally fit. Use backtick formatting inline (e.g., `example`) to distinguish code or technical tokens from prose.
 
 - Use [[term]] markup (exactly two brackets each side) in body and bullet_points for 2-5 key terms per slide. Never use single brackets, triple brackets, or nested brackets.
 - Speaker notes should add context not shown on the slide (no [[ ]] markup).

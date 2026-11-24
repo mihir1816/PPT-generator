@@ -1,3 +1,4 @@
+import asyncio
 import logging
 import uuid
 
@@ -114,20 +115,29 @@ class VectorStoreService:
     ) -> list[dict]:
         if not document_ids:
             return []
-        results = await self._client.search(
-            collection_name=self._collection_name,
-            query_vector=query_vector,
-            query_filter=Filter(
-                must=[
-                    FieldCondition(
-                        key="document_id",
-                        match=MatchAny(any=document_ids),
-                    )
-                ]
-            ),
-            limit=limit,
-            with_payload=True,
-        )
+        results = []
+        for attempt in range(3):
+            try:
+                results = await self._client.search(
+                    collection_name=self._collection_name,
+                    query_vector=query_vector,
+                    query_filter=Filter(
+                        must=[
+                            FieldCondition(
+                                key="document_id",
+                                match=MatchAny(any=document_ids),
+                            )
+                        ]
+                    ),
+                    limit=limit,
+                    with_payload=True,
+                )
+                break
+            except Exception as e:
+                if attempt == 2:
+                    raise
+                logger.warning("Qdrant search attempt %d failed: %s, retrying...", attempt + 1, e)
+                await asyncio.sleep(1.0)
         return [
             {
                 "id": str(hit.id),

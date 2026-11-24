@@ -1,3 +1,4 @@
+import asyncio
 import logging
 import re
 from collections.abc import AsyncGenerator
@@ -70,35 +71,48 @@ class LLMClient:
             system_prompt + user_prompt, max_tokens,
         )
         for model in self._model_chain():
-            try:
-                kwargs: dict = {
-                    "model": model,
-                    "messages": [
-                        {"role": "system", "content": system_prompt},
-                        {"role": "user", "content": user_prompt},
-                    ],
-                    "temperature": temperature,
-                    "max_tokens": max_tokens,
-                }
-                if response_format is not None:
-                    kwargs["response_format"] = response_format
+            max_retries = 5
+            for attempt in range(max_retries):
+                try:
+                    kwargs: dict = {
+                        "model": model,
+                        "messages": [
+                            {"role": "system", "content": system_prompt},
+                            {"role": "user", "content": user_prompt},
+                        ],
+                        "temperature": temperature,
+                        "max_tokens": max_tokens,
+                    }
+                    if response_format is not None:
+                        kwargs["response_format"] = response_format
 
-                response = await self.client.chat.completions.create(**kwargs)
-                content = response.choices[0].message.content or ""
-                return self.strip_think_blocks(content)
-            except RateLimitError as exc:
-                if model != self.model:
-                    raise LLMServiceError(f"Rate limited on fallback model too: {exc}") from exc
-                if not self._fallback_model:
-                    raise LLMServiceError(f"Rate limited and no fallback model configured: {exc}") from exc
-                logger.warning("Rate limited on %s, falling back to %s", model, self._fallback_model)
-                continue
-            except APIConnectionError as exc:
-                raise LLMServiceError(f"Cannot connect to LLM at {self.client.base_url}: {exc}") from exc
-            except APITimeoutError as exc:
-                raise LLMServiceError(f"LLM request timed out after {self._timeout}s") from exc
-            except Exception as exc:
-                raise LLMServiceError(f"LLM generation failed: {exc}") from exc
+                    response = await self.client.chat.completions.create(**kwargs)
+                    content = response.choices[0].message.content or ""
+                    return self.strip_think_blocks(content)
+                except RateLimitError as exc:
+                    if attempt < max_retries - 1:
+                        sleep_s = 8.0 * (attempt + 1)
+                        m = re.search(r"retry in (\d+(?:\.\d+)?)s", str(exc), re.IGNORECASE)
+                        if m:
+                            sleep_s = max(sleep_s, float(m.group(1)) + 1.5)
+                        logger.warning(
+                            "Rate limited on %s (attempt %d/%d). Sleeping %0.1fs before retry...",
+                            model, attempt + 1, max_retries, sleep_s,
+                        )
+                        await asyncio.sleep(sleep_s)
+                        continue
+                    if model != self.model:
+                        raise LLMServiceError(f"Rate limited on fallback model too: {exc}") from exc
+                    if not self._fallback_model:
+                        raise LLMServiceError(f"Rate limited and no fallback model configured: {exc}") from exc
+                    logger.warning("Rate limited on %s, falling back to %s", model, self._fallback_model)
+                    break
+                except APIConnectionError as exc:
+                    raise LLMServiceError(f"Cannot connect to LLM at {self.client.base_url}: {exc}") from exc
+                except APITimeoutError as exc:
+                    raise LLMServiceError(f"LLM request timed out after {self._timeout}s") from exc
+                except Exception as exc:
+                    raise LLMServiceError(f"LLM generation failed: {exc}") from exc
         raise LLMServiceError("All models exhausted")
 
     async def generate_json(
